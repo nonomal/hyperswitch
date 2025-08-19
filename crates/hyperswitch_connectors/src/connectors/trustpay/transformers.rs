@@ -1311,7 +1311,7 @@ pub struct TrustpayGooglePayResponse {
 #[serde(rename_all = "camelCase")]
 pub struct SdkSecretInfo {
     pub display: Secret<String>,
-    pub payment: Option<Secret<String>>,
+    pub payment: Secret<String>,
 }
 
 #[derive(Clone, Default, Debug, Deserialize, Serialize)]
@@ -1534,7 +1534,7 @@ impl From<SdkSecretInfo> for api_models::payments::SecretInfoToInitiateSdk {
     fn from(value: SdkSecretInfo) -> Self {
         Self {
             display: value.display,
-            payment: value.payment,
+            payment: Some(value.payment),
         }
     }
 }
