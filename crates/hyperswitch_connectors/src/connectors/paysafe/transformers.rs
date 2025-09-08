@@ -134,6 +134,135 @@ pub struct PaysafePaymentHandleRequest {
 #[serde(untagged)]
 pub enum PaysafePaymentMethod {
     Card { card: PaysafeCard },
+    Wallet { wallet: PaysafeWallet },
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum PaysafeWallet {
+    ApplePay {
+        #[serde(rename = "applePay")]
+        apple_pay: ApplepayPayment,
+    },
+    /* TODO:
+    GooglePay {
+        #[serde(rename = "googlePay")]
+        google_pay: GooglePayWallet,
+    },
+    */
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplepayPayment {
+    pub label: String,
+    pub request_billing_address: bool,
+    #[serde(rename = "applePayPaymentToken")]
+    pub apple_pay_payment_token: ApplePayPaymentToken,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayPaymentToken {
+    pub token: ApplePayToken,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub billing_contact: Option<ApplePayBillingContact>,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayToken {
+    pub payment_data: ApplePayPaymentData,
+    pub payment_method: ApplePayPaymentMethod,
+    pub transaction_identifier: String,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ApplePayPaymentData {
+    Encrypted(ApplePayEncryptedData),
+    Decrypted(ApplePayDecryptedDataWrapper),
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayEncryptedData {
+    pub data: String,
+    pub signature: String,
+    pub header: ApplePayHeader,
+    pub version: String,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayDecryptedDataWrapper {
+    pub decrypted_data: ApplePayDecryptedData,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayDecryptedData {
+    pub application_primary_account_number: String,
+    pub application_expiration_date: String,
+    pub currency_code: String,
+    pub transaction_amount: String,
+    pub cardholder_name: String,
+    pub device_manufacturer_identifier: String,
+    pub payment_data_type: String,
+    pub payment_data: ApplePayDecryptedPaymentData,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayDecryptedPaymentData {
+    pub online_payment_cryptogram: String,
+    pub eci_indicator: String,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayHeader {
+    pub public_key_hash: String,
+    pub ephemeral_public_key: String,
+    pub transaction_id: String,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayPaymentMethod {
+    pub display_name: String,
+    pub network: String,
+    #[serde(rename = "type")]
+    pub method_type: String,
+}
+
+#[derive(Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApplePayBillingContact {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_lines: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub administrative_area: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub given_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locality: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phonetic_family_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phonetic_given_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub postal_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_administrative_area: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_locality: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -154,6 +283,7 @@ pub enum LinkType {
 
 #[derive(Debug, Serialize)]
 pub enum PaysafePaymentType {
+    // For Apple Pay and Google Pay, paymentType is 'CARD' as per Paysafe docs and is not reserved for card payments only
     #[serde(rename = "CARD")]
     Card,
 }
