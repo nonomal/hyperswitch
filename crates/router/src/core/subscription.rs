@@ -3,7 +3,7 @@ use api_models::subscription::{
     self as subscription_types, CreateSubscriptionResponse, Subscription, SubscriptionStatus,
     SUBSCRIPTION_ID_PREFIX,
 };
-use common_utils::generate_id_with_default_len;
+use common_utils::{ext_traits::ValueExt, generate_id_with_default_len};
 use diesel_models::subscription::SubscriptionNew;
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{api::ApplicationResponse, merchant_context::MerchantContext};
@@ -11,7 +11,7 @@ use payment_methods::helpers::StorageErrorExt;
 use utils::{get_customer_details_from_request, get_or_create_customer};
 
 use super::errors::{self, RouterResponse};
-use crate::{routes::SessionState, types::domain};
+use crate::routes::SessionState;
 
 pub async fn create_subscription(
     state: SessionState,
@@ -64,7 +64,6 @@ pub async fn create_subscription(
     .ok_or(errors::ApiErrorResponse::CustomerNotFound)
     .attach_printable("subscriptions: unable to create a customer")?;
 
-    // If provided we can strore plan_id, coupon_code etc as metadata
     let mut subscription = SubscriptionNew::new(
         id,
         SubscriptionStatus::Created.to_string(),
@@ -98,12 +97,13 @@ pub async fn create_subscription(
 
 pub async fn get_subscription_plans(
     state: SessionState,
-    merchant_context: domain::MerchantContext,
-    authentication_profile_id: Option<common_utils::id_type::ProfileId>,
+    merchant_context: MerchantContext,
+    _authentication_profile_id: Option<common_utils::id_type::ProfileId>,
     client_secret: String,
 ) -> RouterResponse<Vec<subscription_types::GetPlansResponse>> {
     let db = state.store.as_ref();
     // let key_manager_state = &(&state).into();
+    let key_store = merchant_context.get_merchant_key_store();
     let sub_vec = client_secret.split("_secret").collect::<Vec<&str>>();
     let subscription_id =
         sub_vec
@@ -112,16 +112,62 @@ pub async fn get_subscription_plans(
                 field_name: "client_secret",
             })?;
 
-    // let subscription = db
-    //     .subscription(
-    //         &(state.into()),
-    //         merchant_context.get_merchant_key_store(),
-    //         pm_id,
-    //         merchant_context.get_merchant_account().storage_scheme,
-    //     )
-    //     .await
-    //     .change_context(errors::ApiErrorResponse::PaymentMethodNotFound)
-    //     .attach_printable("Unable to find payment method")?;
+    let subscription = db
+        .find_by_merchant_id_subscription_id(
+            merchant_context.get_merchant_account().get_id(),
+            subscription_id.to_string(),
+        )
+        .await
+        .change_context(errors::ApiErrorResponse::GenericNotFoundError { message: "Subscription not found".to_string() })
+        .attach_printable("Unable to find subscription")?;
+
+
+    let mca_id = subscription
+        .merchant_connector_id
+        .ok_or(errors::ApiErrorResponse::GenericNotFoundError 
+            { message: "merchant_connector_id not found".to_string() 
+        })?;
+
+    let billing_processor_mca = db
+        .find_by_merchant_connector_account_merchant_id_merchant_connector_id(
+            &(&state).into(),
+            merchant_context.get_merchant_account().get_id(),
+            &mca_id,
+            &key_store,
+        )
+        .await
+        .change_context(errors::ApiErrorResponse::MerchantConnectorAccountNotFound {
+            id: mca_id.get_string_repr().to_string(),
+        })?;
+
+    // Record back to billing processor
+
+    let auth_type =
+        super::payments::helpers::MerchantConnectorAccountType::DbVal(Box::new(billing_processor_mca.clone()))
+            .get_connector_account_details()
+            .parse_value("ConnectorAuthType")
+            .change_context(errors::ApiErrorResponse::InternalServerError)?;
+
+    let connector = &billing_processor_mca.connector_name;
+
+    let connector_data = crate::types::api::ConnectorData::get_connector_by_name(
+        &state.conf.connectors,
+        &billing_processor_mca.connector_name,
+        crate::types::api::GetToken::Connector,
+        Some(billing_processor_mca.get_id()),
+    )
+    .change_context(errors::ApiErrorResponse::InternalServerError)
+    .attach_printable(
+        "invalid connector name received in billing merchant connector account",
+    )?;
+
+    let connector_integration_for_get_subscription_plans: crate::services::BoxedGetPlansConnectorIntegrationInterface<
+        hyperswitch_domain_models::router_flow_types::subscriptions::GetSubscriptionPlans,
+        hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest,
+        hyperswitch_domain_models::router_response_types::subscriptions::GetSubscriptionPlansResponse,
+        > = connector_data.connector.get_connector_integration();
+
+
     let response = Vec::new();
     Ok(ApplicationResponse::Json(response))
 }

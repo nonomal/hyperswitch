@@ -6,7 +6,6 @@ use hyperswitch_domain_models::{
     api::ApplicationResponse, merchant_context::MerchantContext,
     router_request_types::CustomerDetails,
 };
-use router_env::instrument;
 
 use crate::{
     consts,
@@ -75,7 +74,6 @@ pub fn get_customer_details_from_request(request: CreateSubscriptionRequest) -> 
     }
 }
 
-#[instrument(skip_all)]
 pub fn authenticate_subscription_client_secret_and_check_expiry(
     req_client_secret: &String,
     subscription: &Subscription,
