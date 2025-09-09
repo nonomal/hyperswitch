@@ -161,7 +161,7 @@ pub async fn get_subscription_plans(
     .change_context(errors::ApiErrorResponse::InternalServerError)
     .attach_printable("invalid connector name received in billing merchant connector account")?;
 
-    let connector_integration_for_get_subscription_plans: crate::services::BoxedGetPlansConnectorIntegrationInterface<
+    let connector_integration_for_get_subscription_plans: crate::services::BoxedGetSubscriptionPlansInterface<
         hyperswitch_domain_models::router_flow_types::subscriptions::GetSubscriptionPlans,
         hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest,
         hyperswitch_domain_models::router_response_types::subscriptions::GetSubscriptionPlansResponse,
