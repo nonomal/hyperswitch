@@ -60,6 +60,11 @@ pub async fn get_subscription_plans(
 ) -> impl Responder {
     let client_secret = path.into_inner();
     let flow = Flow::GetPlansForSubscription;
+    let api_auth = auth::ApiKeyAuth::default();
+    let ephemeral_auth = match auth::is_ephemeral_auth(req.headers(), api_auth) {
+        Ok(auth) => auth,
+        Err(err) => return crate::services::api::log_and_return_error_response(err),
+    };
     Box::pin(oss_api::server_wrap(
         flow,
         state,
@@ -76,16 +81,7 @@ pub async fn get_subscription_plans(
                 client_secret,
             )
         },
-        auth::auth_type(
-            &auth::HeaderAuth(auth::ApiKeyAuth {
-                is_connected_allowed: false,
-                is_platform_allowed: false,
-            }),
-            &auth::JWTAuth {
-                permission: Permission::ProfileRoutingRead,
-            },
-            req.headers(),
-        ),
+        &*ephemeral_auth,
         api_locking::LockAction::NotApplicable,
     ))
     .await

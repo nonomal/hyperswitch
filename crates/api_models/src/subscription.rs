@@ -39,6 +39,13 @@ pub struct CreateSubscriptionResponse {
     pub invoice: Option<Invoice>,
 }
 
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BillingConnectorDetails {
+    pub processor_mca: common_utils::id_type::MerchantConnectorAccountId,
+    pub subscription_id: String,
+    pub invoice_id: String,
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct Subscription {
     pub id: String,
@@ -102,10 +109,11 @@ impl CreateSubscriptionResponse {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct GetPlansResponse {
-    plan_id: String,
-    name: String,
-    desscription: String,
+    pub plan_id: String,
+    pub name: String,
+    pub description: String,
 }
+
 pub fn map_customer_resp_to_details(r: &CustomerResponse) -> CustomerDetailsResponse {
     CustomerDetailsResponse {
         id: Some(r.customer_id.clone()),

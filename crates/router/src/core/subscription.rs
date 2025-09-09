@@ -6,9 +6,14 @@ use api_models::subscription::{
 use common_utils::{ext_traits::ValueExt, generate_id_with_default_len};
 use diesel_models::subscription::SubscriptionNew;
 use error_stack::ResultExt;
-use hyperswitch_domain_models::{api::ApplicationResponse, merchant_context::MerchantContext, router_data::ConnectorAuthType};
+use hyperswitch_domain_models::{
+    api::ApplicationResponse, merchant_context::MerchantContext, router_data::ConnectorAuthType,
+};
 use payment_methods::helpers::StorageErrorExt;
-use utils::{get_customer_details_from_request, get_or_create_customer};
+use utils::{
+    authenticate_subscription_client_secret_and_check_expiry, get_customer_details_from_request,
+    get_or_create_customer,
+};
 
 use super::errors::{self, RouterResponse};
 use crate::routes::SessionState;
@@ -102,7 +107,6 @@ pub async fn get_subscription_plans(
     client_secret: String,
 ) -> RouterResponse<Vec<subscription_types::GetPlansResponse>> {
     let db = state.store.as_ref();
-    // let key_manager_state = &(&state).into();
     let key_store = merchant_context.get_merchant_key_store();
     let sub_vec = client_secret.split("_secret").collect::<Vec<&str>>();
     let subscription_id =
@@ -123,6 +127,8 @@ pub async fn get_subscription_plans(
         })
         .attach_printable("Unable to find subscription")?;
 
+    authenticate_subscription_client_secret_and_check_expiry(&client_secret, &subscription)?;
+
     let mca_id = subscription.merchant_connector_id.ok_or(
         errors::ApiErrorResponse::GenericNotFoundError {
             message: "merchant_connector_id not found".to_string(),
@@ -141,14 +147,13 @@ pub async fn get_subscription_plans(
             id: mca_id.get_string_repr().to_string(),
         })?;
 
-    // Record back to billing processor
-
-    let auth_type: ConnectorAuthType = super::payments::helpers::MerchantConnectorAccountType::DbVal(Box::new(
-        billing_processor_mca.clone(),
-    ))
-    .get_connector_account_details()
-    .parse_value("ConnectorAuthType")
-    .change_context(errors::ApiErrorResponse::InternalServerError)?;
+    let auth_type: ConnectorAuthType =
+        super::payments::helpers::MerchantConnectorAccountType::DbVal(Box::new(
+            billing_processor_mca.clone(),
+        ))
+        .get_connector_account_details()
+        .parse_value("ConnectorAuthType")
+        .change_context(errors::ApiErrorResponse::InternalServerError)?;
 
     let connector = &billing_processor_mca.connector_name;
 
@@ -167,6 +172,55 @@ pub async fn get_subscription_plans(
         hyperswitch_domain_models::router_response_types::subscriptions::GetSubscriptionPlansResponse,
         > = connector_data.connector.get_connector_integration();
 
-    let response = Vec::new();
-    Ok(ApplicationResponse::Json(response))
+    let get_plans_request =
+        hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest;
+
+    let router_data = utils::create_subscription_router_data::<
+        hyperswitch_domain_models::router_flow_types::subscriptions::GetSubscriptionPlans,
+        hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest,
+        hyperswitch_domain_models::router_response_types::subscriptions::GetSubscriptionPlansResponse,
+    >(
+        &state,
+        subscription.merchant_id.to_owned(),
+        Some(subscription.customer_id.to_owned()),
+        connector.clone(),
+        auth_type.clone(),
+        get_plans_request,
+        common_utils::id_type::PaymentId::wrap("payment_11323".to_string()).expect("unable to create payment_id"),
+    )?;
+
+    let response = crate::services::api::execute_connector_processing_step::<
+        hyperswitch_domain_models::router_flow_types::subscriptions::GetSubscriptionPlans,
+        _,
+        hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest,
+        hyperswitch_domain_models::router_response_types::subscriptions::GetSubscriptionPlansResponse,
+    >(
+        &state,
+        connector_integration_for_get_subscription_plans,
+        &router_data,
+        common_enums::CallConnectorAction::Trigger,
+        None,
+        None,
+    )
+    .await
+    .change_context(errors::ApiErrorResponse::InternalServerError)
+    .attach_printable("Failed while handling response of subscription_create")?;
+
+    let get_plans_response = response.response.map_err(|err| {
+        crate::logger::error!(?err);
+        errors::ApiErrorResponse::InternalServerError
+    })?;
+
+    let plans: Vec<subscription_types::GetPlansResponse> = get_plans_response
+        .list
+        .clone()
+        .into_iter()
+        .map(|p| subscription_types::GetPlansResponse {
+            plan_id: p.subscription_provider_plan_id,
+            name: p.name,
+            description: p.description.unwrap_or_default(),
+        })
+        .collect();
+    crate::logger::debug!("get_plans_response: {:?}", get_plans_response);
+    Ok(ApplicationResponse::Json(plans))
 }
