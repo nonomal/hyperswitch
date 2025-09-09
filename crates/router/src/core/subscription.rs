@@ -6,7 +6,7 @@ use api_models::subscription::{
 use common_utils::{ext_traits::ValueExt, generate_id_with_default_len};
 use diesel_models::subscription::SubscriptionNew;
 use error_stack::ResultExt;
-use hyperswitch_domain_models::{api::ApplicationResponse, merchant_context::MerchantContext};
+use hyperswitch_domain_models::{api::ApplicationResponse, merchant_context::MerchantContext, router_data::ConnectorAuthType};
 use payment_methods::helpers::StorageErrorExt;
 use utils::{get_customer_details_from_request, get_or_create_customer};
 
@@ -143,7 +143,7 @@ pub async fn get_subscription_plans(
 
     // Record back to billing processor
 
-    let auth_type = super::payments::helpers::MerchantConnectorAccountType::DbVal(Box::new(
+    let auth_type: ConnectorAuthType = super::payments::helpers::MerchantConnectorAccountType::DbVal(Box::new(
         billing_processor_mca.clone(),
     ))
     .get_connector_account_details()
