@@ -137,7 +137,7 @@ pub struct PaysafePaymentHandleRequest {
 #[serde(untagged)]
 pub enum PaysafePaymentMethod {
     Card { card: PaysafeCard },
-    Wallet(PaysafeWallet),
+    Wallet(Box<PaysafeWallet>),
 }
 
 #[derive(Debug, Eq, PartialEq, Serialize)]
@@ -555,14 +555,16 @@ impl<F>
             PaymentsResponseData,
         >,
     ) -> Result<Self, Self::Error> {
-        let redirection_data = match item.response.links.as_ref().and_then(|links| links.first()) {
-            Some(link) => Some(RedirectForm::Form {
+        let redirection_data = item
+            .response
+            .links
+            .as_ref()
+            .and_then(|links| links.first())
+            .map(|link| RedirectForm::Form {
                 endpoint: link.href.clone(),
                 method: Method::Get,
                 form_fields: Default::default(),
-            }),
-            None => None,
-        };
+            });
 
         let connector_metadata = serde_json::json!(PaysafeMeta {
             payment_handle_token: item.response.payment_handle_token.clone(),
