@@ -1,8 +1,6 @@
-use std::str::FromStr;
-
 use api_models::{
     customers::CustomerRequest,
-    subscription::{BillingConnectorDetails, CreateSubscriptionRequest},
+    subscription::CreateSubscriptionRequest,
 };
 use common_utils::{ext_traits::OptionExt, id_type::GenerateId};
 use diesel_models::subscription::Subscription;
@@ -110,7 +108,6 @@ pub fn authenticate_subscription_client_secret_and_check_expiry(
 
 pub fn create_subscription_router_data<F, Req, Res>(
     state: &SessionState,
-    // _billing_processor_details: BillingConnectorDetails,
     merchant_id: common_utils::id_type::MerchantId,
     customer_id: Option<common_utils::id_type::CustomerId>,
     connector_name: String,

@@ -140,7 +140,7 @@ pub async fn get_subscription_plans(
             &(&state).into(),
             merchant_context.get_merchant_account().get_id(),
             &mca_id,
-            &key_store,
+            key_store,
         )
         .await
         .change_context(errors::ApiErrorResponse::MerchantConnectorAccountNotFound {
@@ -174,6 +174,9 @@ pub async fn get_subscription_plans(
 
     let get_plans_request =
         hyperswitch_domain_models::router_request_types::subscriptions::GetSubscriptionPlansRequest;
+    let payment_id = common_utils::id_type::PaymentId::wrap("NA".to_string())
+        .change_context(errors::ApiErrorResponse::InternalServerError)
+        .attach_printable("Unable to nullify payment_id")?;
 
     let router_data = utils::create_subscription_router_data::<
         hyperswitch_domain_models::router_flow_types::subscriptions::GetSubscriptionPlans,
@@ -186,7 +189,7 @@ pub async fn get_subscription_plans(
         connector.clone(),
         auth_type.clone(),
         get_plans_request,
-        common_utils::id_type::PaymentId::wrap("payment_11323".to_string()).expect("unable to create payment_id"),
+        payment_id
     )?;
 
     let response = crate::services::api::execute_connector_processing_step::<

@@ -722,7 +722,7 @@ impl
 
         if base.contains("{{merchant_endpoint_prefix}}") || base.contains('$') {
             return Err(errors::ConnectorError::InvalidConnectorConfig {
-                config: "Chargebee base_url has an unresolved placeholder (expected `$` or `{{merchant_endpoint_prefix}}`).".into(),
+                config: "Chargebee base_url has an unresolved placeholder (expected `$` or `{{merchant_endpoint_prefix}}`).",
             }
             .into());
         }
