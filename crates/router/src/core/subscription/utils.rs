@@ -1,7 +1,4 @@
-use api_models::{
-    customers::CustomerRequest,
-    subscription::CreateSubscriptionRequest,
-};
+use api_models::{customers::CustomerRequest, subscription::CreateSubscriptionRequest};
 use common_utils::{ext_traits::OptionExt, id_type::GenerateId};
 use diesel_models::subscription::Subscription;
 use error_stack::ResultExt;
