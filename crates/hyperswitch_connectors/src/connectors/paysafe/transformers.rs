@@ -59,12 +59,24 @@ pub struct PaysafeConnectorMetadataObject {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PaysafePaymentMethodDetails {
     pub card: Option<HashMap<Currency, CardAccountId>>,
+    pub wallet: Option<WalletAccountId>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CardAccountId {
     no_three_ds: Option<Secret<String>>,
     three_ds: Option<Secret<String>>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct WalletAccountId {
+    apple_pay: Option<HashMap<Currency, ApplePayAccountDetails>>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ApplePayAccountDetails {
+    encrypt: Option<Secret<String>>,
+    decrypt: Option<Secret<String>>,
 }
 
 impl TryFrom<&Option<SecretSerdeValue>> for PaysafeConnectorMetadataObject {
@@ -322,6 +334,46 @@ impl PaysafePaymentMethodDetails {
             .ok_or_else(|| errors::ConnectorError::InvalidConnectorConfig {
                 config: "Missing 3ds account_id",
             })
+    }
+
+    pub fn get_wallet_encrypt_account_id(
+        &self,
+        currency: Currency,
+    ) -> Result<Secret<String>, errors::ConnectorError> {
+        self.wallet
+            .as_ref()
+            .and_then(|wallets| wallets.apple_pay.as_ref())
+            .and_then(|apple_pay| apple_pay.get(&currency))
+            .and_then(|details| details.encrypt.clone())
+            .ok_or_else(|| errors::ConnectorError::InvalidConnectorConfig {
+                config: "Missing ApplePay encrypt account_id",
+            })
+    }
+
+    pub fn get_wallet_decrypt_account_id(
+        &self,
+        currency: Currency,
+    ) -> Result<Secret<String>, errors::ConnectorError> {
+        self.wallet
+            .as_ref()
+            .and_then(|wallets| wallets.apple_pay.as_ref())
+            .and_then(|apple_pay| apple_pay.get(&currency))
+            .and_then(|details| details.decrypt.clone())
+            .ok_or_else(|| errors::ConnectorError::InvalidConnectorConfig {
+                config: "Missing ApplePay decrypt account_id",
+            })
+    }
+
+    pub fn get_wallet_account_id(
+        &self,
+        currency: Currency,
+        is_encrypted: bool,
+    ) -> Result<Secret<String>, errors::ConnectorError> {
+        if is_encrypted {
+            self.get_wallet_encrypt_account_id(currency)
+        } else {
+            self.get_wallet_decrypt_account_id(currency)
+        }
     }
 }
 
