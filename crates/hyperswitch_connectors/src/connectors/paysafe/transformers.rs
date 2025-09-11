@@ -59,18 +59,13 @@ pub struct PaysafeConnectorMetadataObject {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PaysafePaymentMethodDetails {
     pub card: Option<HashMap<Currency, CardAccountId>>,
-    pub wallet: Option<WalletAccountId>,
+    pub apple_pay: Option<HashMap<Currency, ApplePayAccountDetails>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CardAccountId {
     no_three_ds: Option<Secret<String>>,
     three_ds: Option<Secret<String>>,
-}
-
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct WalletAccountId {
-    apple_pay: Option<HashMap<Currency, ApplePayAccountDetails>>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -340,11 +335,10 @@ impl PaysafePaymentMethodDetails {
         &self,
         currency: Currency,
     ) -> Result<Secret<String>, errors::ConnectorError> {
-        self.wallet
+        self.apple_pay
             .as_ref()
-            .and_then(|wallets| wallets.apple_pay.as_ref())
             .and_then(|apple_pay| apple_pay.get(&currency))
-            .and_then(|details| details.encrypt.clone())
+            .and_then(|flow| flow.encrypt.clone())
             .ok_or_else(|| errors::ConnectorError::InvalidConnectorConfig {
                 config: "Missing ApplePay encrypt account_id",
             })
@@ -354,26 +348,13 @@ impl PaysafePaymentMethodDetails {
         &self,
         currency: Currency,
     ) -> Result<Secret<String>, errors::ConnectorError> {
-        self.wallet
+        self.apple_pay
             .as_ref()
-            .and_then(|wallets| wallets.apple_pay.as_ref())
             .and_then(|apple_pay| apple_pay.get(&currency))
-            .and_then(|details| details.decrypt.clone())
+            .and_then(|flow| flow.decrypt.clone())
             .ok_or_else(|| errors::ConnectorError::InvalidConnectorConfig {
                 config: "Missing ApplePay decrypt account_id",
             })
-    }
-
-    pub fn get_wallet_account_id(
-        &self,
-        currency: Currency,
-        is_encrypted: bool,
-    ) -> Result<Secret<String>, errors::ConnectorError> {
-        if is_encrypted {
-            self.get_wallet_encrypt_account_id(currency)
-        } else {
-            self.get_wallet_decrypt_account_id(currency)
-        }
     }
 }
 
@@ -461,9 +442,16 @@ impl TryFrom<&PaysafeRouterData<&PaymentsPreProcessingRouterData>> for PaysafePa
                         ApplePayPaymentData::Encrypted(_)
                     );
 
-                    let account_id = metadata
-                        .account_id
-                        .get_wallet_account_id(currency_code, is_encrypted)?;
+                    let account_id = if is_encrypted {
+                        metadata
+                            .account_id
+                            .get_wallet_encrypt_account_id(currency_code)?
+                    } else {
+                        metadata
+                            .account_id
+                            .get_wallet_decrypt_account_id(currency_code)?
+                    };
+
                     let applepay_payment =
                         PaysafeApplepayPayment::try_from((&applepay_data, item))?;
 
