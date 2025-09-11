@@ -20023,7 +20023,8 @@
           "status",
           "amount",
           "customer_id",
-          "created"
+          "created",
+          "modified_at"
         ],
         "properties": {
           "id": {
@@ -20056,6 +20057,12 @@
             "type": "string",
             "format": "date-time",
             "description": "Time when the payment was created",
+            "example": "2022-09-10T10:11:12Z"
+          },
+          "modified_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Time when the payment was last modified",
             "example": "2022-09-10T10:11:12Z"
           },
           "payment_method_data": {
@@ -20207,6 +20214,11 @@
                 "$ref": "#/components/schemas/FeatureMetadata"
               }
             ],
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "description": "You can specify up to 50 keys, with key names up to 40 characters long and values up to 500 characters long. Metadata is useful for storing additional, structured information on an object.",
             "nullable": true
           }
         }
@@ -22451,6 +22463,14 @@
               }
             ],
             "default": "skip"
+          },
+          "revenue_recovery_retry_algorithm_type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RevenueRecoveryAlgorithmType"
+              }
+            ],
+            "nullable": true
           }
         }
       },
@@ -23598,6 +23618,14 @@
             "$ref": "#/components/schemas/GsmDecision"
           }
         }
+      },
+      "RevenueRecoveryAlgorithmType": {
+        "type": "string",
+        "enum": [
+          "monitoring",
+          "smart",
+          "cascading"
+        ]
       },
       "RevenueRecoveryMetadata": {
         "type": "object",
