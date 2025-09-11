@@ -255,29 +255,29 @@ pub struct PaysafeApplePayPaymentMethod {
 #[serde(rename_all = "camelCase")]
 pub struct PaysafeApplePayBillingContact {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub address_lines: Option<Vec<String>>,
+    pub address_lines: Option<Vec<Secret<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub administrative_area: Option<String>,
+    pub administrative_area: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub country: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub country_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub family_name: Option<String>,
+    pub family_name: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub given_name: Option<String>,
+    pub given_name: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub locality: Option<String>,
+    pub locality: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub phonetic_family_name: Option<String>,
+    pub phonetic_family_name: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub phonetic_given_name: Option<String>,
+    pub phonetic_given_name: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub postal_code: Option<String>,
+    pub postal_code: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sub_administrative_area: Option<String>,
+    pub sub_administrative_area: Option<Secret<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub sub_locality: Option<String>,
+    pub sub_locality: Option<Secret<String>>,
 }
 
 #[derive(Debug, Serialize)]
