@@ -1,6 +1,6 @@
-use base64::Engine;
 use std::collections::HashMap;
 
+use base64::Engine;
 use cards::CardNumber;
 use common_enums::{enums, Currency};
 use common_types::payments::ApplePayPaymentData;

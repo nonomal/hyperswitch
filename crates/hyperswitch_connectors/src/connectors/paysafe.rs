@@ -347,9 +347,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
             {
                 Ok(format!("{}v1/payments", self.base_url(connectors)))
             }
-            _ => {
-                Ok(format!("{}v1/paymenthandles", self.base_url(connectors),))
-            }
+            _ => Ok(format!("{}v1/paymenthandles", self.base_url(connectors),)),
         }
     }
 
