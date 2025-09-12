@@ -94,6 +94,37 @@ impl TryFrom<&ConnectorAuthType> for AciAuthType {
     }
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum AciRecurringType {
+    Initial,
+    Repeated,
+    RegistrationBased,
+}
+
+fn get_str(key: &str, metadata: &serde_json::Value) -> Option<String> {
+    metadata
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+fn determine_recurring_type_for_3ds(
+    item: &PaymentsAuthorizeRouterData,
+) -> Option<AciRecurringType> {
+    if let Some(metadata) = &item.request.metadata {
+        if let Some(recurring_type) = get_str("recurring_type", metadata) {
+            return match recurring_type.as_str() {
+                "repeated" => Some(AciRecurringType::Repeated),
+                "initial" => Some(AciRecurringType::Initial),
+                "registration_based" => Some(AciRecurringType::RegistrationBased),
+                _ => None,
+            };
+        }
+    }
+    None
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AciPaymentsRequest {
@@ -104,6 +135,40 @@ pub struct AciPaymentsRequest {
     #[serde(flatten)]
     pub instruction: Option<Instruction>,
     pub shopper_result_url: Option<String>,
+    #[serde(rename = "customParameters[3DS2_enrolled]")]
+    pub three_ds_two_enrolled: Option<bool>,
+    #[serde(rename = "customParameters[3DS2_flow]")]
+    pub three_ds_two_flow: Option<String>,
+    #[serde(rename = "threeDSecure.challengeIndicator")]
+    pub challenge_indicator: Option<String>,
+    #[serde(rename = "recurringType")]
+    pub recurring_type: Option<AciRecurringType>,
+}
+
+fn get_three_ds_data(
+    item: &PaymentsAuthorizeRouterData,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+    Option<AciRecurringType>,
+) {
+    if item.is_three_ds() {
+        let metadata = item.request.metadata.as_ref();
+        let three_ds_two_flow = metadata.and_then(|meta| get_str("three_ds_flow", meta));
+        let challenge_indicator =
+            metadata.and_then(|meta| get_str("challenge_indicator", meta));
+        let three_ds_two_enrolled = Some(item.request.enrolled_for_3ds);
+        let recurring_type = determine_recurring_type_for_3ds(item);
+        (
+            three_ds_two_flow,
+            challenge_indicator,
+            three_ds_two_enrolled,
+            recurring_type,
+        )
+    } else {
+        (None, None, None, None)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -655,6 +720,10 @@ impl TryFrom<(&AciRouterData<&PaymentsAuthorizeRouterData>, &WalletData)> for Ac
             payment_method,
             instruction: None,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled: None,
+            three_ds_two_flow: None,
+            challenge_indicator: None,
+            recurring_type: None,
         })
     }
 }
@@ -681,6 +750,10 @@ impl
             payment_method,
             instruction: None,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled: None,
+            three_ds_two_flow: None,
+            challenge_indicator: None,
+            recurring_type: None,
         })
     }
 }
@@ -699,6 +772,10 @@ impl TryFrom<(&AciRouterData<&PaymentsAuthorizeRouterData>, &PayLaterData)> for 
             payment_method,
             instruction: None,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled: None,
+            three_ds_two_flow: None,
+            challenge_indicator: None,
+            recurring_type: None,
         })
     }
 }
@@ -713,12 +790,18 @@ impl TryFrom<(&AciRouterData<&PaymentsAuthorizeRouterData>, &Card)> for AciPayme
         let txn_details = get_transaction_details(item)?;
         let payment_method = PaymentDetails::try_from((card_data.clone(), card_holder_name))?;
         let instruction = get_instruction_details(item);
+        let (three_ds_two_flow, challenge_indicator, three_ds_two_enrolled, recurring_type) =
+            get_three_ds_data(item.router_data);
 
         Ok(Self {
             txn_details,
             payment_method,
             instruction,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled,
+            three_ds_two_flow,
+            challenge_indicator,
+            recurring_type,
         })
     }
 }
@@ -746,6 +829,10 @@ impl
             payment_method,
             instruction,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled: None,
+            three_ds_two_flow: None,
+            challenge_indicator: None,
+            recurring_type: None,
         })
     }
 }
@@ -772,6 +859,10 @@ impl
             payment_method: PaymentDetails::Mandate,
             instruction,
             shopper_result_url: item.router_data.request.router_return_url.clone(),
+            three_ds_two_enrolled: None,
+            three_ds_two_flow: None,
+            challenge_indicator: None,
+            recurring_type: None,
         })
     }
 }
@@ -992,11 +1083,19 @@ where
         item: ResponseRouterData<F, AciPaymentsResponse, Req, PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
         let redirection_data = item.response.redirect.map(|data| {
-            let form_fields = std::collections::HashMap::<_, _>::from_iter(
+            let mut form_fields = std::collections::HashMap::<_, _>::from_iter(
                 data.parameters
                     .iter()
                     .map(|parameter| (parameter.name.clone(), parameter.value.clone())),
             );
+
+            if let Some(preconditions) = data.preconditions {
+                if let Some(first_precondition) = preconditions.first() {
+                    for param in &first_precondition.parameters {
+                        form_fields.insert(param.name.clone(), param.value.clone());
+                    }
+                }
+            }
 
             // If method is Get, parameters are appended to URL
             // If method is post, we http Post the method to URL
