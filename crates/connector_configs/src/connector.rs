@@ -124,17 +124,9 @@ pub struct AccountIdConfigForApplePay {
 
 #[serde_with::skip_serializing_none]
 #[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct AccountIdConfigForInterac {
-    pub cad: Option<Vec<InputData>>,
-    pub usd: Option<Vec<InputData>>,
-}
-
-#[serde_with::skip_serializing_none]
-#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AccountIDSupportedMethods {
     card: HashMap<String, AccountIdConfigForCard>,
     apple_pay: HashMap<String, AccountIdConfigForApplePay>,
-    interac: AccountIdConfigForInterac,
 }
 
 #[serde_with::skip_serializing_none]
