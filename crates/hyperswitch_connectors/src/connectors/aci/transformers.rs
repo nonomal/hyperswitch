@@ -156,8 +156,7 @@ fn get_three_ds_data(
     if item.is_three_ds() {
         let metadata = item.request.metadata.as_ref();
         let three_ds_two_flow = metadata.and_then(|meta| get_str("three_ds_flow", meta));
-        let challenge_indicator =
-            metadata.and_then(|meta| get_str("challenge_indicator", meta));
+        let challenge_indicator = metadata.and_then(|meta| get_str("challenge_indicator", meta));
         let three_ds_two_enrolled = Some(item.request.enrolled_for_3ds);
         let recurring_type = determine_recurring_type_for_3ds(item);
         (
