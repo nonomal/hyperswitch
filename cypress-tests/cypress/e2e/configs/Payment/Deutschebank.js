@@ -1,4 +1,5 @@
 import { customerAcceptance } from "./Commons";
+import { getIframeRedirectionConfig } from "./Modifiers";
 
 const successful3DSCardDetails = {
   card_number: "4761739090000088",
@@ -13,7 +14,7 @@ const paymentMethodData3DSResponse = {
     last4: "0088",
     card_type: "DEBIT",
     card_network: "Visa",
-    card_issuer: "INTL HDQTRS-CENTER OWNED",
+    card_issuer: "INTL HDQTRS CENTER OWNED",
     card_issuing_country: "UNITEDSTATES",
     card_isin: "476173",
     card_extended_bin: null,
@@ -22,6 +23,7 @@ const paymentMethodData3DSResponse = {
     card_holder_name: "John Doe",
     payment_checks: null,
     authentication_data: null,
+    auth_code: null,
   },
   billing: null,
 };
@@ -40,6 +42,9 @@ export const connectorDetails = {
         },
       },
     },
+    ...getIframeRedirectionConfig({
+      cardDetails: successful3DSCardDetails,
+    }),
     "3DSManualCapture": {
       Request: {
         payment_method: "card",
@@ -283,6 +288,25 @@ export const connectorDetails = {
         body: {
           status: "requires_payment_method",
           setup_future_usage: "off_session",
+        },
+      },
+    },
+    SaveCardUse3DSAutoCaptureOffSession: {
+      Request: {
+        payment_method: "card",
+        payment_method_type: "debit",
+        payment_method_data: {
+          card: successful3DSCardDetails,
+        },
+        currency: "USD",
+        setup_future_usage: "off_session",
+        customer_acceptance: customerAcceptance,
+      },
+      Response: {
+        status: 200,
+        body: {
+          status: "requires_customer_action",
+          payment_method_data: paymentMethodData3DSResponse,
         },
       },
     },

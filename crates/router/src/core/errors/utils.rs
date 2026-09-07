@@ -55,6 +55,11 @@ impl<T> StorageErrorExt<T, errors::ApiErrorResponse>
                 errors::StorageError::CustomerRedacted => {
                     errors::ApiErrorResponse::CustomerRedacted
                 }
+                errors::StorageError::InvalidDataFormat(err) => {
+                    errors::ApiErrorResponse::InvalidRequestData {
+                        message: format!("InvalidRequestData: {}", err),
+                    }
+                }
                 _ => errors::ApiErrorResponse::InternalServerError,
             };
             err.change_context(new_err)
@@ -92,6 +97,10 @@ pub trait ConnectorErrorExt<T> {
     fn to_payout_failed_response(self) -> error_stack::Result<T, errors::ApiErrorResponse>;
     #[track_caller]
     fn to_vault_failed_response(self) -> error_stack::Result<T, errors::ApiErrorResponse>;
+    #[track_caller]
+    fn to_webhook_configuration_failed_response(
+        self,
+    ) -> error_stack::Result<T, errors::ApiErrorResponse>;
 
     // Validates if the result, is Ok(..) or WebhookEventTypeNotFound all the other error variants
     // are cascaded while these two event types are handled via `Option`
@@ -215,10 +224,10 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     errors::ApiErrorResponse::PaymentAuthorizationFailed { data }
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField { field_name: field_name.clone() }
                 }
                 errors::ConnectorError::MissingRequiredFields { field_names } => {
-                    errors::ApiErrorResponse::MissingRequiredFields { field_names: field_names.to_vec() }
+                    errors::ApiErrorResponse::MissingRequiredFields { field_names: field_names.clone() }
                 }
                 errors::ConnectorError::NotImplemented(reason) => {
                     errors::ApiErrorResponse::NotImplemented {
@@ -230,7 +239,7 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                 errors::ConnectorError::MismatchedPaymentData => {
                     errors::ApiErrorResponse::InvalidDataValue {
                         field_name:
-                            "payment_method_data, payment_method_type and payment_experience does not match",
+                            "payment_method_data, payment_method_type and payment_experience does not match".into(),
                     }
                 },
                 errors::ConnectorError::MandatePaymentDataMismatch {fields}=> {
@@ -248,7 +257,7 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     errors::ApiErrorResponse::MaxFieldLengthViolated { connector: connector.to_string(), field_name: field_name.to_string(), max_length: *max_length, received_length: *received_length }
                 },
                 errors::ConnectorError::InvalidDataFormat { field_name } => {
-                    errors::ApiErrorResponse::InvalidDataValue { field_name }
+                    errors::ApiErrorResponse::InvalidDataValue { field_name: field_name.clone() }
                 },
                 errors::ConnectorError::CaptureMethodNotSupported => {
                     errors::ApiErrorResponse::NotSupported {
@@ -327,7 +336,9 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     }
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
                 }
                 errors::ConnectorError::FailedToObtainIntegrationUrl => {
                     errors::ApiErrorResponse::InvalidConnectorConfiguration {
@@ -427,11 +438,13 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     errors::ApiErrorResponse::DisputeFailed { data }
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
                 }
                 errors::ConnectorError::MissingRequiredFields { field_names } => {
                     errors::ApiErrorResponse::MissingRequiredFields {
-                        field_names: field_names.to_vec(),
+                        field_names: field_names.clone(),
                     }
                 }
                 _ => errors::ApiErrorResponse::InternalServerError,
@@ -459,11 +472,13 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     errors::ApiErrorResponse::DisputeFailed { data }
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
                 }
                 errors::ConnectorError::MissingRequiredFields { field_names } => {
                     errors::ApiErrorResponse::MissingRequiredFields {
-                        field_names: field_names.to_vec(),
+                        field_names: field_names.clone(),
                     }
                 }
                 _ => errors::ApiErrorResponse::InternalServerError,
@@ -492,11 +507,55 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
                     errors::ApiErrorResponse::PayoutFailed { data }
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
                 }
                 errors::ConnectorError::MissingRequiredFields { field_names } => {
                     errors::ApiErrorResponse::MissingRequiredFields {
-                        field_names: field_names.to_vec(),
+                        field_names: field_names.clone(),
+                    }
+                }
+                errors::ConnectorError::NotSupported { message, connector } => {
+                    errors::ApiErrorResponse::NotSupported {
+                        message: format!("{message} by {connector}"),
+                    }
+                }
+                errors::ConnectorError::NotImplemented(reason) => {
+                    errors::ApiErrorResponse::NotImplemented {
+                        message: errors::NotImplementedMessage::Reason(reason.to_string()),
+                    }
+                }
+                errors::ConnectorError::InvalidConnectorConfig { config } => {
+                    errors::ApiErrorResponse::InvalidConnectorConfiguration {
+                        config: config.to_string(),
+                    }
+                }
+                errors::ConnectorError::InvalidDataFormat { field_name } => {
+                    errors::ApiErrorResponse::InvalidDataValue {
+                        field_name: field_name.clone(),
+                    }
+                }
+                _ => errors::ApiErrorResponse::InternalServerError,
+            };
+            err.change_context(error)
+        })
+    }
+
+    fn to_vault_failed_response(self) -> error_stack::Result<T, errors::ApiErrorResponse> {
+        self.map_err(|err| {
+            let error = match err.current_context() {
+                errors::ConnectorError::ProcessingStepFailed(_) => {
+                    errors::ApiErrorResponse::ExternalVaultFailed
+                }
+                errors::ConnectorError::MissingRequiredField { field_name } => {
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
+                }
+                errors::ConnectorError::MissingRequiredFields { field_names } => {
+                    errors::ApiErrorResponse::MissingRequiredFields {
+                        field_names: field_names.clone(),
                     }
                 }
                 errors::ConnectorError::NotSupported { message, connector } => {
@@ -520,18 +579,22 @@ impl<T> ConnectorErrorExt<T> for error_stack::Result<T, errors::ConnectorError> 
         })
     }
 
-    fn to_vault_failed_response(self) -> error_stack::Result<T, errors::ApiErrorResponse> {
+    fn to_webhook_configuration_failed_response(
+        self,
+    ) -> error_stack::Result<T, errors::ApiErrorResponse> {
         self.map_err(|err| {
             let error = match err.current_context() {
                 errors::ConnectorError::ProcessingStepFailed(_) => {
                     errors::ApiErrorResponse::ExternalVaultFailed
                 }
                 errors::ConnectorError::MissingRequiredField { field_name } => {
-                    errors::ApiErrorResponse::MissingRequiredField { field_name }
+                    errors::ApiErrorResponse::MissingRequiredField {
+                        field_name: field_name.clone(),
+                    }
                 }
                 errors::ConnectorError::MissingRequiredFields { field_names } => {
                     errors::ApiErrorResponse::MissingRequiredFields {
-                        field_names: field_names.to_vec(),
+                        field_names: field_names.clone(),
                     }
                 }
                 errors::ConnectorError::NotSupported { message, connector } => {

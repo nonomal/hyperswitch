@@ -11,10 +11,14 @@ use diesel_models::{
     enums::MerchantStorageScheme, merchant_account::MerchantAccountUpdateInternal,
 };
 use error_stack::ResultExt;
-use masking::{PeekInterface, Secret};
+use hyperswitch_masking::{PeekInterface, Secret};
 use router_env::logger;
 
-use crate::type_encryption::{crypto_operation, AsyncLift, CryptoOperation};
+use crate::{
+    behaviour::Conversion,
+    merchant_key_store,
+    type_encryption::{crypto_operation, AsyncLift, CryptoOperation},
+};
 
 #[cfg(feature = "v1")]
 #[derive(Clone, Debug, serde::Serialize)]
@@ -50,6 +54,9 @@ pub struct MerchantAccount {
     pub is_platform_account: bool,
     pub product_type: Option<common_enums::MerchantProductType>,
     pub merchant_account_type: common_enums::MerchantAccountType,
+    pub network_tokenization_credentials: OptionalEncryptableValue,
+    pub fingerprint_secret: Option<Secret<String>>,
+    pub offer_engine_config: OptionalEncryptableValue,
 }
 
 #[cfg(feature = "v1")]
@@ -87,6 +94,9 @@ pub struct MerchantAccountSetter {
     pub is_platform_account: bool,
     pub product_type: Option<common_enums::MerchantProductType>,
     pub merchant_account_type: common_enums::MerchantAccountType,
+    pub network_tokenization_credentials: OptionalEncryptableValue,
+    pub fingerprint_secret: Option<Secret<String>>,
+    pub offer_engine_config: OptionalEncryptableValue,
 }
 
 #[cfg(feature = "v1")]
@@ -124,6 +134,9 @@ impl From<MerchantAccountSetter> for MerchantAccount {
             is_platform_account: item.is_platform_account,
             product_type: item.product_type,
             merchant_account_type: item.merchant_account_type,
+            network_tokenization_credentials: item.network_tokenization_credentials,
+            fingerprint_secret: item.fingerprint_secret,
+            offer_engine_config: item.offer_engine_config,
         }
     }
 }
@@ -146,6 +159,7 @@ pub struct MerchantAccountSetter {
     pub version: common_enums::ApiVersion,
     pub product_type: Option<common_enums::MerchantProductType>,
     pub merchant_account_type: common_enums::MerchantAccountType,
+    pub fingerprint_secret: Option<Secret<String>>,
 }
 
 #[cfg(feature = "v2")]
@@ -166,6 +180,7 @@ impl From<MerchantAccountSetter> for MerchantAccount {
             version,
             product_type,
             merchant_account_type,
+            fingerprint_secret,
         } = item;
         Self {
             id,
@@ -182,6 +197,7 @@ impl From<MerchantAccountSetter> for MerchantAccount {
             version,
             product_type,
             merchant_account_type,
+            fingerprint_secret,
         }
     }
 }
@@ -203,6 +219,7 @@ pub struct MerchantAccount {
     pub version: common_enums::ApiVersion,
     pub product_type: Option<common_enums::MerchantProductType>,
     pub merchant_account_type: common_enums::MerchantAccountType,
+    pub fingerprint_secret: Option<Secret<String>>,
 }
 
 impl MerchantAccount {
@@ -210,6 +227,20 @@ impl MerchantAccount {
     /// Get the unique identifier of MerchantAccount
     pub fn get_id(&self) -> &common_utils::id_type::MerchantId {
         &self.merchant_id
+    }
+
+    #[cfg(feature = "v1")]
+    /// Get the unique identifier of MerchantAccount
+    pub fn get_default_profile(&self) -> &Option<common_utils::id_type::ProfileId> {
+        &self.default_profile
+    }
+
+    #[cfg(feature = "v1")]
+    /// Get the decrypted merchant-level Offer Engine config JSON, if configured
+    pub fn get_offer_engine_config(&self) -> Option<&pii::SecretSerdeValue> {
+        self.offer_engine_config
+            .as_ref()
+            .map(|config| config.get_inner())
     }
 
     #[cfg(feature = "v2")]
@@ -273,6 +304,8 @@ pub enum MerchantAccountUpdate {
         default_profile: Option<Option<common_utils::id_type::ProfileId>>,
         payment_link_config: Option<serde_json::Value>,
         pm_collect_link_config: Option<serde_json::Value>,
+        network_tokenization_credentials: OptionalEncryptableValue,
+        offer_engine_config: OptionalEncryptableValue,
     },
     StorageSchemeUpdate {
         storage_scheme: MerchantStorageScheme,
@@ -282,7 +315,6 @@ pub enum MerchantAccountUpdate {
     },
     UnsetDefaultProfile,
     ModifiedAtUpdate,
-    ToPlatformAccount,
 }
 
 #[cfg(feature = "v2")]
@@ -301,7 +333,6 @@ pub enum MerchantAccountUpdate {
         recon_status: diesel_models::enums::ReconStatus,
     },
     ModifiedAtUpdate,
-    ToPlatformAccount,
 }
 
 #[cfg(feature = "v1")]
@@ -331,6 +362,8 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 default_profile,
                 payment_link_config,
                 pm_collect_link_config,
+                network_tokenization_credentials,
+                offer_engine_config,
             } => Self {
                 merchant_name: merchant_name.map(Encryption::from),
                 merchant_details: merchant_details.map(Encryption::from),
@@ -359,6 +392,9 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 recon_status: None,
                 is_platform_account: None,
                 product_type: None,
+                network_tokenization_credentials: network_tokenization_credentials
+                    .map(Encryption::from),
+                offer_engine_config: offer_engine_config.map(Encryption::from),
             },
             MerchantAccountUpdate::StorageSchemeUpdate { storage_scheme } => Self {
                 storage_scheme: Some(storage_scheme),
@@ -388,6 +424,8 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 pm_collect_link_config: None,
                 is_platform_account: None,
                 product_type: None,
+                network_tokenization_credentials: None,
+                offer_engine_config: None,
             },
             MerchantAccountUpdate::ReconUpdate { recon_status } => Self {
                 recon_status: Some(recon_status),
@@ -417,6 +455,8 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 pm_collect_link_config: None,
                 is_platform_account: None,
                 product_type: None,
+                network_tokenization_credentials: None,
+                offer_engine_config: None,
             },
             MerchantAccountUpdate::UnsetDefaultProfile => Self {
                 default_profile: Some(None),
@@ -446,6 +486,8 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 pm_collect_link_config: None,
                 is_platform_account: None,
                 product_type: None,
+                network_tokenization_credentials: None,
+                offer_engine_config: None,
             },
             MerchantAccountUpdate::ModifiedAtUpdate => Self {
                 modified_at: now,
@@ -475,35 +517,8 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 pm_collect_link_config: None,
                 is_platform_account: None,
                 product_type: None,
-            },
-            MerchantAccountUpdate::ToPlatformAccount => Self {
-                modified_at: now,
-                merchant_name: None,
-                merchant_details: None,
-                return_url: None,
-                webhook_details: None,
-                sub_merchants_enabled: None,
-                parent_merchant_id: None,
-                enable_payment_response_hash: None,
-                payment_response_hash_key: None,
-                redirect_to_merchant_with_http_post: None,
-                publishable_key: None,
-                storage_scheme: None,
-                locker_id: None,
-                metadata: None,
-                routing_algorithm: None,
-                primary_business_details: None,
-                intent_fulfillment_time: None,
-                frm_routing_algorithm: None,
-                payout_routing_algorithm: None,
-                organization_id: None,
-                is_recon_enabled: None,
-                default_profile: None,
-                recon_status: None,
-                payment_link_config: None,
-                pm_collect_link_config: None,
-                is_platform_account: Some(true),
-                product_type: None,
+                network_tokenization_credentials: None,
+                offer_engine_config: None,
             },
         }
     }
@@ -568,25 +583,13 @@ impl From<MerchantAccountUpdate> for MerchantAccountUpdateInternal {
                 is_platform_account: None,
                 product_type: None,
             },
-            MerchantAccountUpdate::ToPlatformAccount => Self {
-                modified_at: now,
-                merchant_name: None,
-                merchant_details: None,
-                publishable_key: None,
-                storage_scheme: None,
-                metadata: None,
-                organization_id: None,
-                recon_status: None,
-                is_platform_account: Some(true),
-                product_type: None,
-            },
         }
     }
 }
 
 #[cfg(feature = "v2")]
 #[async_trait::async_trait]
-impl super::behaviour::Conversion for MerchantAccount {
+impl Conversion for MerchantAccount {
     type DstType = diesel_models::merchant_account::MerchantAccount;
     type NewDstType = diesel_models::merchant_account::MerchantAccountNew;
     async fn convert(self) -> CustomResult<Self::DstType, ValidationError> {
@@ -607,6 +610,7 @@ impl super::behaviour::Conversion for MerchantAccount {
             is_platform_account: self.is_platform_account,
             product_type: self.product_type,
             merchant_account_type: self.merchant_account_type,
+            fingerprint_secret: self.fingerprint_secret,
         };
 
         Ok(diesel_models::MerchantAccount::from(setter))
@@ -625,7 +629,7 @@ impl super::behaviour::Conversion for MerchantAccount {
         let publishable_key =
             item.publishable_key
                 .ok_or(ValidationError::MissingRequiredField {
-                    field_name: "publishable_key".to_string(),
+                    field_name: "publishable_key".into(),
                 })?;
 
         async {
@@ -670,6 +674,7 @@ impl super::behaviour::Conversion for MerchantAccount {
                 version: item.version,
                 product_type: item.product_type,
                 merchant_account_type: item.merchant_account_type.unwrap_or_default(),
+                fingerprint_secret: item.fingerprint_secret,
             })
         }
         .await
@@ -685,6 +690,7 @@ impl super::behaviour::Conversion for MerchantAccount {
             merchant_name: self.merchant_name.map(Encryption::from),
             merchant_details: self.merchant_details.map(Encryption::from),
             publishable_key: Some(self.publishable_key),
+            storage_scheme: self.storage_scheme,
             metadata: self.metadata,
             created_at: now,
             modified_at: now,
@@ -696,13 +702,14 @@ impl super::behaviour::Conversion for MerchantAccount {
                 .product_type
                 .or(Some(common_enums::MerchantProductType::Orchestration)),
             merchant_account_type: self.merchant_account_type,
+            fingerprint_secret: self.fingerprint_secret,
         })
     }
 }
 
 #[cfg(feature = "v1")]
 #[async_trait::async_trait]
-impl super::behaviour::Conversion for MerchantAccount {
+impl Conversion for MerchantAccount {
     type DstType = diesel_models::merchant_account::MerchantAccount;
     type NewDstType = diesel_models::merchant_account::MerchantAccountNew;
     async fn convert(self) -> CustomResult<Self::DstType, ValidationError> {
@@ -738,6 +745,11 @@ impl super::behaviour::Conversion for MerchantAccount {
             is_platform_account: self.is_platform_account,
             product_type: self.product_type,
             merchant_account_type: self.merchant_account_type,
+            network_tokenization_credentials: self
+                .network_tokenization_credentials
+                .map(|credentials| credentials.into()),
+            fingerprint_secret: self.fingerprint_secret,
+            offer_engine_config: self.offer_engine_config.map(|config| config.into()),
         };
 
         Ok(diesel_models::MerchantAccount::from(setter))
@@ -756,7 +768,7 @@ impl super::behaviour::Conversion for MerchantAccount {
         let publishable_key =
             item.publishable_key
                 .ok_or(ValidationError::MissingRequiredField {
-                    field_name: "publishable_key".to_string(),
+                    field_name: "publishable_key".into(),
                 })?;
 
         async {
@@ -818,6 +830,35 @@ impl super::behaviour::Conversion for MerchantAccount {
                 is_platform_account: item.is_platform_account,
                 product_type: item.product_type,
                 merchant_account_type: item.merchant_account_type.unwrap_or_default(),
+                network_tokenization_credentials: item
+                    .network_tokenization_credentials
+                    .async_lift(|inner| async {
+                        crypto_operation(
+                            state,
+                            type_name!(Self::DstType),
+                            CryptoOperation::DecryptOptional(inner),
+                            key_manager_identifier.clone(),
+                            key.peek(),
+                        )
+                        .await
+                        .and_then(|val| val.try_into_optionaloperation())
+                    })
+                    .await?,
+                fingerprint_secret: item.fingerprint_secret,
+                offer_engine_config: item
+                    .offer_engine_config
+                    .async_lift(|inner| async {
+                        crypto_operation(
+                            state,
+                            type_name!(Self::DstType),
+                            CryptoOperation::DecryptOptional(inner),
+                            key_manager_identifier.clone(),
+                            key.peek(),
+                        )
+                        .await
+                        .and_then(|val| val.try_into_optionaloperation())
+                    })
+                    .await?,
             })
         }
         .await
@@ -841,6 +882,7 @@ impl super::behaviour::Conversion for MerchantAccount {
             payment_response_hash_key: self.payment_response_hash_key,
             redirect_to_merchant_with_http_post: Some(self.redirect_to_merchant_with_http_post),
             publishable_key: Some(self.publishable_key),
+            storage_scheme: self.storage_scheme,
             locker_id: self.locker_id,
             metadata: self.metadata,
             routing_algorithm: self.routing_algorithm,
@@ -862,6 +904,11 @@ impl super::behaviour::Conversion for MerchantAccount {
                 .product_type
                 .or(Some(common_enums::MerchantProductType::Orchestration)),
             merchant_account_type: self.merchant_account_type,
+            network_tokenization_credentials: self
+                .network_tokenization_credentials
+                .map(|credentials| credentials.into()),
+            fingerprint_secret: self.fingerprint_secret,
+            offer_engine_config: self.offer_engine_config.map(|config| config.into()),
         })
     }
 }
@@ -877,4 +924,80 @@ impl MerchantAccount {
             });
         metadata.and_then(|a| a.compatible_connector)
     }
+}
+
+#[async_trait::async_trait]
+pub trait MerchantAccountInterface
+where
+    MerchantAccount: Conversion<
+        DstType = diesel_models::merchant_account::MerchantAccount,
+        NewDstType = diesel_models::merchant_account::MerchantAccountNew,
+    >,
+{
+    type Error;
+    async fn insert_merchant(
+        &self,
+        merchant_account: MerchantAccount,
+        merchant_key_store: &merchant_key_store::MerchantKeyStore,
+    ) -> CustomResult<MerchantAccount, Self::Error>;
+
+    async fn find_merchant_account_by_merchant_id(
+        &self,
+        merchant_id: &common_utils::id_type::MerchantId,
+        merchant_key_store: &merchant_key_store::MerchantKeyStore,
+    ) -> CustomResult<MerchantAccount, Self::Error>;
+
+    async fn update_all_merchant_account(
+        &self,
+        merchant_account: MerchantAccountUpdate,
+    ) -> CustomResult<usize, Self::Error>;
+
+    async fn update_merchant(
+        &self,
+        this: MerchantAccount,
+        merchant_account: MerchantAccountUpdate,
+        merchant_key_store: &merchant_key_store::MerchantKeyStore,
+    ) -> CustomResult<MerchantAccount, Self::Error>;
+
+    async fn update_specific_fields_in_merchant(
+        &self,
+        merchant_id: &common_utils::id_type::MerchantId,
+        merchant_account: MerchantAccountUpdate,
+        merchant_key_store: &merchant_key_store::MerchantKeyStore,
+    ) -> CustomResult<MerchantAccount, Self::Error>;
+
+    async fn find_merchant_account_by_publishable_key(
+        &self,
+        publishable_key: &str,
+    ) -> CustomResult<(MerchantAccount, merchant_key_store::MerchantKeyStore), Self::Error>;
+
+    #[cfg(feature = "olap")]
+    async fn list_merchant_accounts_by_organization_id(
+        &self,
+        organization_id: &common_utils::id_type::OrganizationId,
+    ) -> CustomResult<Vec<MerchantAccount>, Self::Error>;
+
+    async fn delete_merchant_account_by_merchant_id(
+        &self,
+        merchant_id: &common_utils::id_type::MerchantId,
+    ) -> CustomResult<bool, Self::Error>;
+
+    #[cfg(feature = "olap")]
+    async fn list_multiple_merchant_accounts(
+        &self,
+        merchant_ids: Vec<common_utils::id_type::MerchantId>,
+    ) -> CustomResult<Vec<MerchantAccount>, Self::Error>;
+
+    #[cfg(feature = "olap")]
+    async fn list_merchant_and_org_ids(
+        &self,
+        limit: u32,
+        offset: Option<u32>,
+    ) -> CustomResult<
+        Vec<(
+            common_utils::id_type::MerchantId,
+            common_utils::id_type::OrganizationId,
+        )>,
+        Self::Error,
+    >;
 }

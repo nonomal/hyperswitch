@@ -3,11 +3,13 @@ use std::{collections::HashMap, fs::File, io::BufReader};
 use actix_multipart::form::{tempfile::TempFile, MultipartForm};
 use actix_web::{HttpResponse, ResponseError};
 use common_enums::{CardNetwork, PaymentMethodType};
-use common_utils::{events::ApiEventMetric, pii::PhoneNumberStrategy};
+use common_utils::{events::ApiEventMetric, id_type, pii::PhoneNumberStrategy};
 use csv::Reader;
-use masking::Secret;
+use hyperswitch_masking::Secret;
 use serde::{Deserialize, Serialize};
 use time::{Date, PrimitiveDateTime};
+
+use crate::payments;
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RevenueRecoveryBackfillRequest {
@@ -21,11 +23,41 @@ pub struct RevenueRecoveryBackfillRequest {
     pub clean_bank_name: Option<String>,
     pub country_name: Option<String>,
     pub daily_retry_history: Option<String>,
+    pub is_active: Option<bool>,
+    #[serde(
+        default,
+        deserialize_with = "RevenueRecoveryBackfillRequest::deserialize_history_vec_opt"
+    )]
+    pub account_update_history: Option<Vec<AccountUpdateHistoryRecord>>,
+}
+
+impl RevenueRecoveryBackfillRequest {
+    pub fn deserialize_history_vec_opt<'de, D>(
+        deserializer: D,
+    ) -> Result<Option<Vec<AccountUpdateHistoryRecord>>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::Deserialize;
+        let val = Option::<String>::deserialize(deserializer)?;
+        match val.as_deref().map(str::trim) {
+            None | Some("") => Ok(None),
+            Some(s) => serde_json::from_str::<Vec<AccountUpdateHistoryRecord>>(s)
+                .map(Some)
+                .map_err(serde::de::Error::custom),
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct UnlockStatusResponse {
     pub unlocked: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UnlockStatusRequest {
+    pub connector_customer_id: String,
+    pub payment_intent_id: id_type::GlobalPaymentId,
 }
 
 #[derive(Debug, Serialize)]
@@ -46,6 +78,35 @@ pub struct CsvParsingError {
     pub error: String,
 }
 
+#[derive(Debug, Serialize)]
+pub struct RetryStatsMigrationCsvResult {
+    pub records: Vec<(usize, RetryStatsMigrationRecord)>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RetryStatsMigrationResponse {
+    pub processed_records: usize,
+    pub failed_records: usize,
+    pub row_errors: Vec<CsvParsingError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountUpdateHistoryRecord {
+    pub old_token: String,
+    pub new_token: String,
+    #[serde(with = "common_utils::custom_serde::iso8601")]
+    pub updated_at: PrimitiveDateTime,
+    pub old_token_info: Option<payments::AdditionalCardInfo>,
+    pub new_token_info: Option<payments::AdditionalCardInfo>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct RetryStatsMigrationRecord {
+    pub cluster_key: String,
+    /// Raw JSON text of a pre-aggregated `StatsDocument`
+    pub stats: String,
+}
+
 /// Comprehensive card
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComprehensiveCardData {
@@ -55,7 +116,9 @@ pub struct ComprehensiveCardData {
     pub card_network: Option<CardNetwork>,
     pub card_issuer: Option<String>,
     pub card_issuing_country: Option<String>,
-    pub daily_retry_history: Option<HashMap<Date, i32>>,
+    pub daily_retry_history: Option<HashMap<PrimitiveDateTime, i32>>,
+    pub is_active: Option<bool>,
+    pub account_update_history: Option<Vec<AccountUpdateHistoryRecord>>,
 }
 
 impl ApiEventMetric for RevenueRecoveryDataBackfillResponse {
@@ -70,6 +133,12 @@ impl ApiEventMetric for UnlockStatusResponse {
     }
 }
 
+impl ApiEventMetric for UnlockStatusRequest {
+    fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
+        Some(common_utils::events::ApiEventsType::Miscellaneous)
+    }
+}
+
 impl ApiEventMetric for CsvParsingResult {
     fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
         Some(common_utils::events::ApiEventsType::Miscellaneous)
@@ -77,6 +146,24 @@ impl ApiEventMetric for CsvParsingResult {
 }
 
 impl ApiEventMetric for CsvParsingError {
+    fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
+        Some(common_utils::events::ApiEventsType::Miscellaneous)
+    }
+}
+
+impl ApiEventMetric for RetryStatsMigrationRecord {
+    fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
+        Some(common_utils::events::ApiEventsType::Miscellaneous)
+    }
+}
+
+impl ApiEventMetric for RetryStatsMigrationCsvResult {
+    fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
+        Some(common_utils::events::ApiEventsType::Miscellaneous)
+    }
+}
+
+impl ApiEventMetric for RetryStatsMigrationResponse {
     fn get_api_event_type(&self) -> Option<common_utils::events::ApiEventsType> {
         Some(common_utils::events::ApiEventsType::Miscellaneous)
     }
@@ -241,5 +328,53 @@ impl RevenueRecoveryDataBackfillForm {
             records,
             failed_records,
         })
+    }
+}
+
+#[derive(Debug, MultipartForm)]
+pub struct RetryStatsMigrationForm {
+    #[multipart(rename = "file")]
+    pub file: TempFile,
+}
+
+impl RetryStatsMigrationForm {
+    /// Parse the whole CSV STRICTLY: every row must deserialize. Any failure aborts the
+    /// upload and nothing is inserted
+    pub fn validate_and_get_records(&self) -> Result<RetryStatsMigrationCsvResult, BackfillError> {
+        let file = File::open(self.file.file.path())
+            .map_err(|error| BackfillError::FileProcessingError(error.to_string()))?;
+
+        let mut csv_reader = Reader::from_reader(BufReader::new(file));
+
+        let mut records = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+
+        for (row_index, record_result) in csv_reader
+            .deserialize::<RetryStatsMigrationRecord>()
+            .enumerate()
+        {
+            match record_result {
+                Ok(record) => {
+                    records.push((row_index + 2, record));
+                }
+                Err(err) => {
+                    // +2 because enumerate starts at 0 and the CSV has a header row
+                    errors.push(format!("row {}: {}", row_index + 2, err));
+                }
+            }
+        }
+
+        if !errors.is_empty() {
+            let total = errors.len();
+            let shown: Vec<String> = errors.into_iter().take(10).collect();
+            let mut message = format!("{total} row(s) failed CSV parsing: {}", shown.join("; "));
+            let hidden = total - shown.len();
+            if hidden > 0 {
+                message.push_str(&format!("; ...and {hidden} more"));
+            }
+            return Err(BackfillError::CsvParsingError(message));
+        }
+
+        Ok(RetryStatsMigrationCsvResult { records })
     }
 }

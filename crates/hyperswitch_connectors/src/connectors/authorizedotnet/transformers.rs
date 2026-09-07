@@ -12,13 +12,14 @@ use common_utils::{
 };
 use error_stack::ResultExt;
 use hyperswitch_domain_models::{
+    mandates,
     payment_method_data::{Card, PaymentMethodData, WalletData},
     router_data::{
         AdditionalPaymentMethodConnectorResponse, ConnectorAuthType, ConnectorResponseData,
         ErrorResponse, RouterData,
     },
     router_flow_types::RSync,
-    router_request_types::ResponseId,
+    router_request_types::{ResponseId, SurchargeDetails},
     router_response_types::{
         ConnectorCustomerResponseData, MandateReference, PaymentsResponseData, RedirectForm,
         RefundsResponseData,
@@ -30,7 +31,7 @@ use hyperswitch_domain_models::{
     },
 };
 use hyperswitch_interfaces::errors;
-use masking::{ExposeInterface, PeekInterface, Secret, StrongSecret};
+use hyperswitch_masking::{ExposeInterface, PeekInterface, Secret, StrongSecret};
 use rand::distributions::{Alphanumeric, DistString};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,7 @@ use crate::{
 };
 
 const MAX_ID_LENGTH: usize = 20;
+const ADDRESS_MAX_LENGTH: usize = 60;
 
 fn get_random_string() -> String {
     Alphanumeric.sample_string(&mut rand::thread_rng(), MAX_ID_LENGTH)
@@ -163,10 +165,16 @@ struct TransactionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     user_fields: Option<UserFields>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    surcharge: Option<Surcharge>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     processing_options: Option<ProcessingOptions>,
     #[serde(skip_serializing_if = "Option::is_none")]
     subsequent_auth_information: Option<SubsequentAuthInformation>,
-    authorization_indicator_type: Option<AuthorizationIndicator>,
+}
+
+#[derive(Debug, Serialize)]
+struct Surcharge {
+    amount: FloatMajorUnit,
 }
 
 #[derive(Debug, Serialize)]
@@ -259,12 +267,6 @@ pub enum Reason {
     Reauthorization,
     #[serde(rename = "noShow")]
     NoShow,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthorizationIndicator {
-    authorization_indicator: AuthorizationType,
 }
 
 #[derive(Debug, Serialize)]
@@ -399,9 +401,15 @@ impl ForeignTryFrom<Value> for Vec<UserField> {
             .attach_printable("")?;
         let mut vector: Self = Self::new();
         for (key, value) in hashmap {
+            let string_value = match value {
+                Value::Bool(boolean) => boolean.to_string(),
+                Value::Number(number) => number.to_string(),
+                Value::String(string) => string.to_string(),
+                _ => value.to_string(),
+            };
             vector.push(UserField {
                 name: key,
-                value: value.to_string(),
+                value: string_value,
             });
         }
         Ok(vector)
@@ -466,7 +474,7 @@ impl TryFrom<&SetupMandateRouterData> for CreateCustomerPaymentProfileRequest {
             .map(|address| BillTo {
                 first_name: address.first_name.clone(),
                 last_name: address.last_name.clone(),
-                address: address.line1.clone(),
+                address: get_address_line(&address.line1, &address.line2, &address.line3),
                 city: address.city.clone(),
                 state: address.state.clone(),
                 zip: address.zip.clone(),
@@ -494,7 +502,7 @@ impl TryFrom<&SetupMandateRouterData> for CreateCustomerPaymentProfileRequest {
                         .payment_data
                         .get_encrypted_apple_pay_payment_data_mandatory()
                         .change_context(errors::ConnectorError::MissingRequiredField {
-                            field_name: "Apple pay encrypted data",
+                            field_name: "Apple pay encrypted data".into(),
                         })?;
 
                     Ok(PaymentProfile {
@@ -557,7 +565,12 @@ impl TryFrom<&SetupMandateRouterData> for CreateCustomerPaymentProfileRequest {
             | PaymentMethodData::OpenBanking(_)
             | PaymentMethodData::CardToken(_)
             | PaymentMethodData::NetworkToken(_)
-            | PaymentMethodData::CardDetailsForNetworkTransactionId(_) => {
+            | PaymentMethodData::CardDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::CardWithOptionalCVC(_)
+            | PaymentMethodData::CardWithNetworkTokenDetails(_)
+            | PaymentMethodData::CardWithLimitedDetails(_)
+            | PaymentMethodData::DecryptedWalletTokenDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::NetworkTokenDetailsForNetworkTransactionId(_) => {
                 Err(errors::ConnectorError::NotImplemented(
                     utils::get_unimplemented_payment_method_error_message("authorizedotnet"),
                 ))
@@ -597,6 +610,21 @@ pub struct AuthorizedotnetCustomerResponse {
     pub messages: ResponseMessages,
 }
 
+fn extract_surcharge_amount(
+    surcharge_details: Option<&SurchargeDetails>,
+    currency: common_enums::Currency,
+) -> CustomResult<Option<FloatMajorUnit>, errors::ConnectorError> {
+    surcharge_details
+        .map(|details| {
+            details
+                .get_total_surcharge_amount()
+                .to_major_unit_as_f64(currency)
+                .change_context(errors::ConnectorError::RequestEncodingFailed)
+                .attach_printable("Failed to convert minor unit amount to major unit float")
+        })
+        .transpose()
+}
+
 fn extract_customer_id(text: &str) -> Option<String> {
     let re = Regex::new(r"ID (\d+)").ok()?;
     re.captures(text)
@@ -626,7 +654,8 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetCustomerResponse, T, Pay
                     .into(),
                 ),
             },
-            ResultCode::Error => {
+
+            ResultCode::Error | ResultCode::Unknown => {
                 let error_message = item.response.messages.message.first();
                 if let Some(connector_customer_id) =
                     error_message.and_then(|error| extract_customer_id(&error.text))
@@ -659,6 +688,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetCustomerResponse, T, Pay
                         status_code: item.http_code,
                         attempt_status: None,
                         connector_transaction_id: None,
+                        connector_response_reference_id: None,
                         network_advice_code: None,
                         network_decline_code: None,
                         network_error_message: None,
@@ -706,9 +736,12 @@ impl<F, T>
                     })),
                     connector_metadata: None,
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: None,
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 }),
                 ..item.data
             })
@@ -732,6 +765,7 @@ impl<F, T>
                 status_code: item.http_code,
                 attempt_status: None,
                 connector_transaction_id: None,
+                connector_response_reference_id: None,
                 network_advice_code: None,
                 network_decline_code: None,
                 network_error_message: None,
@@ -805,13 +839,17 @@ impl TryFrom<&AuthorizedotnetRouterData<&PaymentsAuthorizeRouterData>>
             .clone()
             .and_then(|mandate_ids| mandate_ids.mandate_reference_id)
         {
-            Some(api_models::payments::MandateReferenceId::NetworkMandateId(network_trans_id)) => {
-                TransactionRequest::try_from((item, network_trans_id))?
+            Some(mandates::MandateReferenceId::NetworkMandateId(network_trans_id)) => {
+                TransactionRequest::try_from((
+                    item,
+                    network_trans_id.network_transaction_id.clone(),
+                ))?
             }
-            Some(api_models::payments::MandateReferenceId::ConnectorMandateId(
-                connector_mandate_id,
-            )) => TransactionRequest::try_from((item, connector_mandate_id))?,
-            Some(api_models::payments::MandateReferenceId::NetworkTokenWithNTI(_)) => {
+            Some(mandates::MandateReferenceId::ConnectorMandateId(connector_mandate_id)) => {
+                TransactionRequest::try_from((item, connector_mandate_id))?
+            }
+            Some(mandates::MandateReferenceId::NetworkTokenWithNTI(_))
+            | Some(mandates::MandateReferenceId::CardWithLimitedData(_)) => {
                 Err(errors::ConnectorError::NotImplemented(
                     utils::get_unimplemented_payment_method_error_message("authorizedotnet"),
                 ))?
@@ -838,7 +876,12 @@ impl TryFrom<&AuthorizedotnetRouterData<&PaymentsAuthorizeRouterData>>
                     | PaymentMethodData::OpenBanking(_)
                     | PaymentMethodData::CardToken(_)
                     | PaymentMethodData::NetworkToken(_)
-                    | PaymentMethodData::CardDetailsForNetworkTransactionId(_) => {
+                    | PaymentMethodData::CardDetailsForNetworkTransactionId(_)
+                    | PaymentMethodData::CardWithOptionalCVC(_)
+                    | PaymentMethodData::CardWithNetworkTokenDetails(_)
+                    | PaymentMethodData::CardWithLimitedDetails(_)
+                    | PaymentMethodData::DecryptedWalletTokenDetailsForNetworkTransactionId(_)
+                    | PaymentMethodData::NetworkTokenDetailsForNetworkTransactionId(_) => {
                         Err(errors::ConnectorError::NotImplemented(
                             utils::get_unimplemented_payment_method_error_message(
                                 "authorizedotnet",
@@ -871,6 +914,13 @@ impl
             String,
         ),
     ) -> Result<Self, Self::Error> {
+        let surcharge_amount = extract_surcharge_amount(
+            item.router_data.request.surcharge_details.as_ref(),
+            item.router_data.request.currency,
+        )?;
+
+        let surcharge = surcharge_amount.map(|amount| Surcharge { amount });
+
         Ok(Self {
             transaction_type: TransactionType::try_from(item.router_data.request.capture_method)?,
             amount: item.amount,
@@ -880,6 +930,13 @@ impl
                     PaymentDetails::CreditCard(CreditCardDetails {
                         card_number: (*ccard.card_number).clone(),
                         expiration_date: ccard.get_expiry_date_as_yyyymm("-"),
+                        card_code: None,
+                    })
+                }
+                PaymentMethodData::CardDetailsForNetworkTransactionId(ref card_details) => {
+                    PaymentDetails::CreditCard(CreditCardDetails {
+                        card_number: (*card_details.card_number).clone(),
+                        expiration_date: card_details.get_expiry_date_as_yyyymm("-"),
                         card_code: None,
                     })
                 }
@@ -900,7 +957,11 @@ impl
                 | PaymentMethodData::OpenBanking(_)
                 | PaymentMethodData::CardToken(_)
                 | PaymentMethodData::NetworkToken(_)
-                | PaymentMethodData::CardDetailsForNetworkTransactionId(_) => {
+                | PaymentMethodData::CardWithOptionalCVC(_)
+                | PaymentMethodData::CardWithNetworkTokenDetails(_)
+                | PaymentMethodData::CardWithLimitedDetails(_)
+                | PaymentMethodData::DecryptedWalletTokenDetailsForNetworkTransactionId(_)
+                | PaymentMethodData::NetworkTokenDetailsForNetworkTransactionId(_) => {
                     Err(errors::ConnectorError::NotImplemented(
                         utils::get_unimplemented_payment_method_error_message("authorizedotnet"),
                     ))?
@@ -936,7 +997,7 @@ impl
                 .map(|address| BillTo {
                     first_name: address.first_name.clone(),
                     last_name: address.last_name.clone(),
-                    address: address.line1.clone(),
+                    address: get_address_line(&address.line1, &address.line2, &address.line3),
                     city: address.city.clone(),
                     state: address.state.clone(),
                     zip: address.zip.clone(),
@@ -955,32 +1016,57 @@ impl
                 original_network_trans_id: Secret::new(network_trans_id),
                 reason: Reason::Resubmission,
             }),
-            authorization_indicator_type: match item.router_data.request.capture_method {
-                Some(capture_method) => Some(AuthorizationIndicator {
-                    authorization_indicator: capture_method.try_into()?,
-                }),
-                None => None,
-            },
+            surcharge,
         })
     }
+}
+fn get_address_line(
+    address_line1: &Option<Secret<String>>,
+    address_line2: &Option<Secret<String>>,
+    address_line3: &Option<Secret<String>>,
+) -> Option<Secret<String>> {
+    for lines in [
+        vec![address_line1, address_line2, address_line3],
+        vec![address_line1, address_line2],
+    ] {
+        let combined: String = lines
+            .into_iter()
+            .flatten()
+            .map(|s| s.clone().expose())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if !combined.is_empty() && combined.len() <= ADDRESS_MAX_LENGTH {
+            return Some(Secret::new(combined));
+        }
+    }
+    address_line1.clone()
 }
 
 impl
     TryFrom<(
         &AuthorizedotnetRouterData<&PaymentsAuthorizeRouterData>,
-        api_models::payments::ConnectorMandateReferenceId,
+        mandates::ConnectorMandateReferenceId,
     )> for TransactionRequest
 {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(
         (item, connector_mandate_id): (
             &AuthorizedotnetRouterData<&PaymentsAuthorizeRouterData>,
-            api_models::payments::ConnectorMandateReferenceId,
+            mandates::ConnectorMandateReferenceId,
         ),
     ) -> Result<Self, Self::Error> {
         let mandate_id = connector_mandate_id
             .get_connector_mandate_id()
             .ok_or(errors::ConnectorError::MissingConnectorMandateID)?;
+
+        let surcharge_amount = extract_surcharge_amount(
+            item.router_data.request.surcharge_details.as_ref(),
+            item.router_data.request.currency,
+        )?;
+
+        let surcharge = surcharge_amount.map(|amount| Surcharge { amount });
+
         Ok(Self {
             transaction_type: TransactionType::try_from(item.router_data.request.capture_method)?,
             amount: item.amount,
@@ -1022,12 +1108,7 @@ impl
                 is_subsequent_auth: true,
             }),
             subsequent_auth_information: None,
-            authorization_indicator_type: match item.router_data.request.capture_method {
-                Some(capture_method) => Some(AuthorizationIndicator {
-                    authorization_indicator: capture_method.try_into()?,
-                }),
-                None => None,
-            },
+            surcharge,
         })
     }
 }
@@ -1045,6 +1126,13 @@ impl
             &Card,
         ),
     ) -> Result<Self, Self::Error> {
+        if item.router_data.is_three_ds() {
+            return Err(errors::ConnectorError::NotSupported {
+                message: "3DS flow".to_string(),
+                connector: "Authorizedotnet",
+            }
+            .into());
+        };
         let profile = if item
             .router_data
             .request
@@ -1080,6 +1168,13 @@ impl
             None
         };
 
+        let surcharge_amount = extract_surcharge_amount(
+            item.router_data.request.surcharge_details.as_ref(),
+            item.router_data.request.currency,
+        )?;
+
+        let surcharge = surcharge_amount.map(|amount| Surcharge { amount });
+
         Ok(Self {
             transaction_type: TransactionType::try_from(item.router_data.request.capture_method)?,
             amount: item.amount,
@@ -1112,7 +1207,7 @@ impl
                 .map(|address| BillTo {
                     first_name: address.first_name.clone(),
                     last_name: address.last_name.clone(),
-                    address: address.line1.clone(),
+                    address: get_address_line(&address.line1, &address.line2, &address.line3),
                     city: address.city.clone(),
                     state: address.state.clone(),
                     zip: address.zip.clone(),
@@ -1126,12 +1221,7 @@ impl
             },
             processing_options: None,
             subsequent_auth_information: None,
-            authorization_indicator_type: match item.router_data.request.capture_method {
-                Some(capture_method) => Some(AuthorizationIndicator {
-                    authorization_indicator: capture_method.try_into()?,
-                }),
-                None => None,
-            },
+            surcharge,
         })
     }
 }
@@ -1184,6 +1274,13 @@ impl
             None
         };
 
+        let surcharge_amount = extract_surcharge_amount(
+            item.router_data.request.surcharge_details.as_ref(),
+            item.router_data.request.currency,
+        )?;
+
+        let surcharge = surcharge_amount.map(|amount| Surcharge { amount });
+
         Ok(Self {
             transaction_type: TransactionType::try_from(item.router_data.request.capture_method)?,
             amount: item.amount,
@@ -1215,7 +1312,7 @@ impl
                 .map(|address| BillTo {
                     first_name: address.first_name.clone(),
                     last_name: address.last_name.clone(),
-                    address: address.line1.clone(),
+                    address: get_address_line(&address.line1, &address.line2, &address.line3),
                     city: address.city.clone(),
                     state: address.state.clone(),
                     zip: address.zip.clone(),
@@ -1229,12 +1326,7 @@ impl
             },
             processing_options: None,
             subsequent_auth_information: None,
-            authorization_indicator_type: match item.router_data.request.capture_method {
-                Some(capture_method) => Some(AuthorizationIndicator {
-                    authorization_indicator: capture_method.try_into()?,
-                }),
-                None => None,
-            },
+            surcharge,
         })
     }
 }
@@ -1301,6 +1393,8 @@ pub enum AuthorizedotnetPaymentStatus {
     HeldForReview,
     #[serde(rename = "5")]
     RequiresAction,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone, serde::Deserialize, Serialize)]
@@ -1313,10 +1407,12 @@ pub enum AuthorizedotnetRefundStatus {
     Error,
     #[serde(rename = "4")]
     HeldForReview,
+    #[serde(other)]
+    Unknown,
 }
 
 fn get_payment_status(
-    (item, auto_capture): (AuthorizedotnetPaymentStatus, bool),
+    (item, auto_capture, prev_status): (AuthorizedotnetPaymentStatus, bool, enums::AttemptStatus),
 ) -> enums::AttemptStatus {
     match item {
         AuthorizedotnetPaymentStatus::Approved => {
@@ -1330,7 +1426,14 @@ fn get_payment_status(
             enums::AttemptStatus::Failure
         }
         AuthorizedotnetPaymentStatus::RequiresAction => enums::AttemptStatus::AuthenticationPending,
-        AuthorizedotnetPaymentStatus::HeldForReview => enums::AttemptStatus::Pending,
+        AuthorizedotnetPaymentStatus::HeldForReview => enums::AttemptStatus::Unresolved,
+        AuthorizedotnetPaymentStatus::Unknown => {
+            router_env::logger::warn!(
+                "Unknown authorizedotnet payment status received; retaining previous status {:?}",
+                prev_status
+            );
+            prev_status
+        }
     }
 }
 
@@ -1345,6 +1448,8 @@ enum ResultCode {
     #[default]
     Ok,
     Error,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Default, Clone, Deserialize, PartialEq, Serialize)]
@@ -1418,7 +1523,7 @@ pub struct AuthorizedotnetPaymentsResponse {
 pub struct AuthorizedotnetNonZeroMandateResponse {
     customer_profile_id: Option<String>,
     customer_payment_profile_id_list: Option<Vec<String>>,
-    pub messages: ResponseMessages,
+    pub messages: Option<ResponseMessages>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -1449,16 +1554,26 @@ pub enum AuthorizedotnetVoidStatus {
     Error,
     #[serde(rename = "4")]
     HeldForReview,
+    #[serde(other)]
+    Unknown,
 }
 
-impl From<AuthorizedotnetVoidStatus> for enums::AttemptStatus {
-    fn from(item: AuthorizedotnetVoidStatus) -> Self {
-        match item {
-            AuthorizedotnetVoidStatus::Approved => Self::Voided,
-            AuthorizedotnetVoidStatus::Declined | AuthorizedotnetVoidStatus::Error => {
-                Self::VoidFailed
-            }
-            AuthorizedotnetVoidStatus::HeldForReview => Self::VoidInitiated,
+fn get_void_status(
+    item: AuthorizedotnetVoidStatus,
+    prev_status: enums::AttemptStatus,
+) -> enums::AttemptStatus {
+    match item {
+        AuthorizedotnetVoidStatus::Approved => enums::AttemptStatus::Voided,
+        AuthorizedotnetVoidStatus::Declined | AuthorizedotnetVoidStatus::Error => {
+            enums::AttemptStatus::VoidFailed
+        }
+        AuthorizedotnetVoidStatus::HeldForReview => enums::AttemptStatus::VoidInitiated,
+        AuthorizedotnetVoidStatus::Unknown => {
+            router_env::logger::warn!(
+                "Unknown authorizedotnet void status received; retaining previous status {:?}",
+                prev_status
+            );
+            prev_status
         }
     }
 }
@@ -1500,6 +1615,7 @@ fn convert_to_additional_payment_method_connector_response(
                 payment_checks: Some(payment_checks),
                 card_network: None,
                 domestic_network: None,
+                auth_code: None,
             })
         }
     }
@@ -1518,11 +1634,13 @@ impl<F, T>
             bool,
         ),
     ) -> Result<Self, Self::Error> {
+        let prev_status = item.data.status;
         match &item.response.transaction_response {
             Some(TransactionResponse::AuthorizedotnetTransactionResponse(transaction_response)) => {
                 let status = get_payment_status((
                     transaction_response.response_code.clone(),
                     is_auto_capture,
+                    prev_status,
                 ));
                 let error = transaction_response.errors.as_ref().and_then(|errors| {
                     errors.iter().next().map(|error| ErrorResponse {
@@ -1532,6 +1650,7 @@ impl<F, T>
                         status_code: item.http_code,
                         attempt_status: None,
                         connector_transaction_id: Some(transaction_response.transaction_id.clone()),
+                        connector_response_reference_id: None,
                         network_advice_code: None,
                         network_decline_code: None,
                         network_error_message: None,
@@ -1549,7 +1668,7 @@ impl<F, T>
                     })
                     .transpose()
                     .change_context(errors::ConnectorError::MissingRequiredField {
-                        field_name: "connector_metadata",
+                        field_name: "connector_metadata".into(),
                     })?;
 
                 let connector_response_data =
@@ -1596,11 +1715,14 @@ impl<F, T>
                                 .network_trans_id
                                 .clone()
                                 .map(|network_trans_id| network_trans_id.expose()),
+                            network_txn_link_id: None,
                             connector_response_reference_id: Some(
                                 transaction_response.transaction_id.clone(),
                             ),
                             incremental_authorization_allowed: None,
+                            authentication_data: None,
                             charges: None,
+                            payment_account_reference: None,
                         }),
                     },
                     connector_response: connector_response_data,
@@ -1625,9 +1747,11 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetVoidResponse, T, Payment
     fn try_from(
         item: ResponseRouterData<F, AuthorizedotnetVoidResponse, T, PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
+        let prev_status = item.data.status;
         match &item.response.transaction_response {
             Some(transaction_response) => {
-                let status = enums::AttemptStatus::from(transaction_response.response_code.clone());
+                let status =
+                    get_void_status(transaction_response.response_code.clone(), prev_status);
                 let error = transaction_response.errors.as_ref().and_then(|errors| {
                     errors.iter().next().map(|error| ErrorResponse {
                         code: error.error_code.clone(),
@@ -1636,6 +1760,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetVoidResponse, T, Payment
                         status_code: item.http_code,
                         attempt_status: None,
                         connector_transaction_id: Some(transaction_response.transaction_id.clone()),
+                        connector_response_reference_id: None,
                         network_advice_code: None,
                         network_decline_code: None,
                         network_error_message: None,
@@ -1653,7 +1778,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetVoidResponse, T, Payment
                     })
                     .transpose()
                     .change_context(errors::ConnectorError::MissingRequiredField {
-                        field_name: "connector_metadata",
+                        field_name: "connector_metadata".into(),
                     })?;
                 Ok(Self {
                     status,
@@ -1670,11 +1795,14 @@ impl<F, T> TryFrom<ResponseRouterData<F, AuthorizedotnetVoidResponse, T, Payment
                                 .network_trans_id
                                 .clone()
                                 .map(|network_trans_id| network_trans_id.expose()),
+                            network_txn_link_id: None,
                             connector_response_reference_id: Some(
                                 transaction_response.transaction_id.clone(),
                             ),
                             incremental_authorization_allowed: None,
+                            authentication_data: None,
                             charges: None,
+                            payment_account_reference: None,
                         }),
                     },
                     ..item.data
@@ -1773,20 +1901,28 @@ fn get_refund_metadata(
         (Some(payment_detail), _) => Ok(payment_detail),
         (_, Some(payment_detail)) => Ok(payment_detail),
         (None, None) => Err(errors::ConnectorError::MissingRequiredField {
-            field_name: "payment_details",
+            field_name: "payment_details".into(),
         }
         .into()),
     }
 }
-impl From<AuthorizedotnetRefundStatus> for enums::RefundStatus {
-    fn from(item: AuthorizedotnetRefundStatus) -> Self {
-        match item {
-            AuthorizedotnetRefundStatus::Declined | AuthorizedotnetRefundStatus::Error => {
-                Self::Failure
-            }
-            AuthorizedotnetRefundStatus::Approved | AuthorizedotnetRefundStatus::HeldForReview => {
-                Self::Pending
-            }
+fn get_refund_status(
+    item: AuthorizedotnetRefundStatus,
+    prev_status: enums::RefundStatus,
+) -> enums::RefundStatus {
+    match item {
+        AuthorizedotnetRefundStatus::Declined | AuthorizedotnetRefundStatus::Error => {
+            enums::RefundStatus::Failure
+        }
+        AuthorizedotnetRefundStatus::Approved | AuthorizedotnetRefundStatus::HeldForReview => {
+            enums::RefundStatus::Pending
+        }
+        AuthorizedotnetRefundStatus::Unknown => {
+            router_env::logger::warn!(
+                "Unknown authorizedotnet refund status received; retaining previous status {:?}",
+                prev_status
+            );
+            prev_status
         }
     }
 }
@@ -1805,8 +1941,12 @@ impl<F> TryFrom<RefundsResponseRouterData<F, AuthorizedotnetRefundResponse>>
     fn try_from(
         item: RefundsResponseRouterData<F, AuthorizedotnetRefundResponse>,
     ) -> Result<Self, Self::Error> {
+        let prev_refund_status = item.data.request.refund_status;
         let transaction_response = &item.response.transaction_response;
-        let refund_status = enums::RefundStatus::from(transaction_response.response_code.clone());
+        let refund_status = get_refund_status(
+            transaction_response.response_code.clone(),
+            prev_refund_status,
+        );
         let error = transaction_response.errors.clone().and_then(|errors| {
             errors.first().map(|error| ErrorResponse {
                 code: error.error_code.clone(),
@@ -1815,6 +1955,7 @@ impl<F> TryFrom<RefundsResponseRouterData<F, AuthorizedotnetRefundResponse>>
                 status_code: item.http_code,
                 attempt_status: None,
                 connector_transaction_id: Some(transaction_response.transaction_id.clone()),
+                connector_response_reference_id: None,
                 network_advice_code: None,
                 network_decline_code: None,
                 network_error_message: None,
@@ -1906,6 +2047,10 @@ pub enum SyncStatus {
     GeneralError,
     #[serde(rename = "FDSPendingReview")]
     FDSPendingReview,
+    #[serde(rename = "FDSAuthorizedPendingReview")]
+    FDSAuthorizedPendingReview,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1916,6 +2061,8 @@ pub enum RSyncStatus {
     Declined,
     GeneralError,
     Voided,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1946,32 +2093,51 @@ pub struct AuthorizedotnetRSyncResponse {
     messages: ResponseMessages,
 }
 
-impl From<SyncStatus> for enums::AttemptStatus {
-    fn from(transaction_status: SyncStatus) -> Self {
-        match transaction_status {
-            SyncStatus::SettledSuccessfully | SyncStatus::CapturedPendingSettlement => {
-                Self::Charged
-            }
-            SyncStatus::AuthorizedPendingCapture => Self::Authorized,
-            SyncStatus::Declined => Self::AuthenticationFailed,
-            SyncStatus::Voided => Self::Voided,
-            SyncStatus::CouldNotVoid => Self::VoidFailed,
-            SyncStatus::GeneralError => Self::Failure,
-            SyncStatus::RefundSettledSuccessfully
-            | SyncStatus::RefundPendingSettlement
-            | SyncStatus::FDSPendingReview => Self::Pending,
+fn get_sync_attempt_status(
+    transaction_status: SyncStatus,
+    prev_status: enums::AttemptStatus,
+) -> enums::AttemptStatus {
+    match transaction_status {
+        SyncStatus::SettledSuccessfully | SyncStatus::CapturedPendingSettlement => {
+            enums::AttemptStatus::Charged
+        }
+        SyncStatus::AuthorizedPendingCapture => enums::AttemptStatus::Authorized,
+        SyncStatus::Declined => enums::AttemptStatus::AuthenticationFailed,
+        SyncStatus::Voided => enums::AttemptStatus::Voided,
+        SyncStatus::CouldNotVoid => enums::AttemptStatus::VoidFailed,
+        SyncStatus::GeneralError => enums::AttemptStatus::Failure,
+        SyncStatus::RefundSettledSuccessfully | SyncStatus::RefundPendingSettlement => {
+            enums::AttemptStatus::Charged
+        }
+        SyncStatus::FDSPendingReview | SyncStatus::FDSAuthorizedPendingReview => {
+            enums::AttemptStatus::Unresolved
+        }
+        SyncStatus::Unknown => {
+            router_env::logger::warn!(
+                "Unknown authorizedotnet sync status received; retaining previous status {:?}",
+                prev_status
+            );
+            prev_status
         }
     }
 }
 
-impl From<RSyncStatus> for enums::RefundStatus {
-    fn from(transaction_status: RSyncStatus) -> Self {
-        match transaction_status {
-            RSyncStatus::RefundSettledSuccessfully => Self::Success,
-            RSyncStatus::RefundPendingSettlement => Self::Pending,
-            RSyncStatus::Declined | RSyncStatus::GeneralError | RSyncStatus::Voided => {
-                Self::Failure
-            }
+fn get_rsync_refund_status(
+    transaction_status: RSyncStatus,
+    prev_status: enums::RefundStatus,
+) -> enums::RefundStatus {
+    match transaction_status {
+        RSyncStatus::RefundSettledSuccessfully => enums::RefundStatus::Success,
+        RSyncStatus::RefundPendingSettlement => enums::RefundStatus::Pending,
+        RSyncStatus::Declined | RSyncStatus::GeneralError | RSyncStatus::Voided => {
+            enums::RefundStatus::Failure
+        }
+        RSyncStatus::Unknown => {
+            router_env::logger::warn!(
+                "Unknown authorizedotnet rsync status received; retaining previous status {:?}",
+                prev_status
+            );
+            prev_status
         }
     }
 }
@@ -1984,9 +2150,11 @@ impl TryFrom<RefundsResponseRouterData<RSync, AuthorizedotnetRSyncResponse>>
     fn try_from(
         item: RefundsResponseRouterData<RSync, AuthorizedotnetRSyncResponse>,
     ) -> Result<Self, Self::Error> {
+        let prev_refund_status = item.data.request.refund_status;
         match item.response.transaction {
             Some(transaction) => {
-                let refund_status = enums::RefundStatus::from(transaction.transaction_status);
+                let refund_status =
+                    get_rsync_refund_status(transaction.transaction_status, prev_refund_status);
                 Ok(Self {
                     response: Ok(RefundsResponseData {
                         connector_refund_id: transaction.transaction_id,
@@ -2011,9 +2179,11 @@ impl<F, Req> TryFrom<ResponseRouterData<F, AuthorizedotnetSyncResponse, Req, Pay
     fn try_from(
         item: ResponseRouterData<F, AuthorizedotnetSyncResponse, Req, PaymentsResponseData>,
     ) -> Result<Self, Self::Error> {
+        let prev_status = item.data.status;
         match item.response.transaction {
             Some(transaction) => {
-                let payment_status = enums::AttemptStatus::from(transaction.transaction_status);
+                let payment_status =
+                    get_sync_attempt_status(transaction.transaction_status, prev_status);
                 Ok(Self {
                     response: Ok(PaymentsResponseData::TransactionResponse {
                         resource_id: ResponseId::ConnectorTransactionId(
@@ -2023,9 +2193,12 @@ impl<F, Req> TryFrom<ResponseRouterData<F, AuthorizedotnetSyncResponse, Req, Pay
                         mandate_reference: Box::new(None),
                         connector_metadata: None,
                         network_txn_id: None,
+                        network_txn_link_id: None,
                         connector_response_reference_id: Some(transaction.transaction_id.clone()),
                         incremental_authorization_allowed: None,
+                        authentication_data: None,
                         charges: None,
+                        payment_account_reference: None,
                     }),
                     status: payment_status,
                     ..item.data
@@ -2033,13 +2206,14 @@ impl<F, Req> TryFrom<ResponseRouterData<F, AuthorizedotnetSyncResponse, Req, Pay
             }
 
             // E00053 indicates "server too busy"
-            // If the server is too busy, we return the already available data
+            // E00104 indicates "Server in maintenance"
+            // If the server is too busy or Server in maintenance, we return the already available data
             None => match item
                 .response
                 .messages
                 .message
                 .iter()
-                .find(|msg| msg.code == "E00053")
+                .find(|msg| msg.code == "E00053" || msg.code == "E00104")
             {
                 Some(_) => Ok(item.data),
                 None => Ok(Self {
@@ -2118,6 +2292,7 @@ fn get_err_response(
         status_code,
         attempt_status: None,
         connector_transaction_id: None,
+        connector_response_reference_id: None,
         network_advice_code: None,
         network_decline_code: None,
         network_error_message: None,
@@ -2128,7 +2303,7 @@ fn get_err_response(
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthorizedotnetWebhookObjectId {
-    pub webhook_id: String,
+    pub webhook_id: Option<String>,
     pub event_type: AuthorizedotnetWebhookEvent,
     pub payload: AuthorizedotnetWebhookPayload,
 }
@@ -2158,6 +2333,8 @@ pub enum AuthorizedotnetWebhookEvent {
     VoidCreated,
     #[serde(rename = "net.authorize.payment.refund.created")]
     RefundCreated,
+    #[serde(other)]
+    Unknown,
 }
 ///Including Unknown to map unknown webhook events
 #[derive(Debug, Deserialize)]
@@ -2192,16 +2369,20 @@ impl From<AuthorizedotnetIncomingWebhookEventType> for IncomingWebhookEvent {
     }
 }
 
-impl From<AuthorizedotnetWebhookEvent> for SyncStatus {
+impl TryFrom<AuthorizedotnetWebhookEvent> for SyncStatus {
+    type Error = error_stack::Report<errors::ConnectorError>;
     // status mapping reference https://developer.authorize.net/api/reference/features/webhooks.html#Event_Types_and_Payloads
-    fn from(event_type: AuthorizedotnetWebhookEvent) -> Self {
+    fn try_from(event_type: AuthorizedotnetWebhookEvent) -> Result<Self, Self::Error> {
         match event_type {
-            AuthorizedotnetWebhookEvent::AuthorizationCreated => Self::AuthorizedPendingCapture,
+            AuthorizedotnetWebhookEvent::AuthorizationCreated => Ok(Self::AuthorizedPendingCapture),
             AuthorizedotnetWebhookEvent::CaptureCreated
-            | AuthorizedotnetWebhookEvent::AuthCapCreated => Self::CapturedPendingSettlement,
-            AuthorizedotnetWebhookEvent::PriorAuthCapture => Self::SettledSuccessfully,
-            AuthorizedotnetWebhookEvent::VoidCreated => Self::Voided,
-            AuthorizedotnetWebhookEvent::RefundCreated => Self::RefundSettledSuccessfully,
+            | AuthorizedotnetWebhookEvent::AuthCapCreated => Ok(Self::CapturedPendingSettlement),
+            AuthorizedotnetWebhookEvent::PriorAuthCapture => Ok(Self::SettledSuccessfully),
+            AuthorizedotnetWebhookEvent::VoidCreated => Ok(Self::Voided),
+            AuthorizedotnetWebhookEvent::RefundCreated => Ok(Self::RefundSettledSuccessfully),
+            AuthorizedotnetWebhookEvent::Unknown => {
+                Err(errors::ConnectorError::WebhookBodyDecodingFailed.into())
+            }
         }
     }
 }
@@ -2219,10 +2400,12 @@ pub fn get_trans_id(
 impl TryFrom<AuthorizedotnetWebhookObjectId> for AuthorizedotnetSyncResponse {
     type Error = error_stack::Report<errors::ConnectorError>;
     fn try_from(item: AuthorizedotnetWebhookObjectId) -> Result<Self, Self::Error> {
+        let transaction_id = get_trans_id(&item)?;
+        let transaction_status = SyncStatus::try_from(item.event_type)?;
         Ok(Self {
             transaction: Some(SyncTransactionResponse {
-                transaction_id: get_trans_id(&item)?,
-                transaction_status: SyncStatus::from(item.event_type),
+                transaction_id,
+                transaction_status,
             }),
             messages: ResponseMessages {
                 ..Default::default()
@@ -2245,7 +2428,7 @@ fn get_wallet_data(
                 .payment_data
                 .get_encrypted_apple_pay_payment_data_mandatory()
                 .change_context(errors::ConnectorError::MissingRequiredField {
-                    field_name: "Apple pay encrypted data",
+                    field_name: "Apple pay encrypted data".into(),
                 })?;
             Ok(PaymentDetails::OpaqueData(WalletDetails {
                 data_descriptor: WalletMethod::Applepay,

@@ -1,5 +1,5 @@
 use async_bb8_diesel::AsyncRunQueryDsl;
-use diesel::{associations::HasTable, ExpressionMethods, QueryDsl};
+use diesel::{associations::HasTable, BoolExpressionMethods, ExpressionMethods, QueryDsl};
 pub use diesel_models::{
     payment_link::{PaymentLink, PaymentLinkNew},
     schema::payment_link::dsl,
@@ -7,7 +7,7 @@ pub use diesel_models::{
 use error_stack::ResultExt;
 
 use crate::{
-    connection::PgPooledConn,
+    connection::DatabaseConnectionWithContext,
     core::errors::{self, CustomResult},
     logger,
 };
@@ -15,8 +15,8 @@ use crate::{
 #[async_trait::async_trait]
 pub trait PaymentLinkDbExt: Sized {
     async fn filter_by_constraints(
-        conn: &PgPooledConn,
-        merchant_id: &common_utils::id_type::MerchantId,
+        conn: &DatabaseConnectionWithContext<'_>,
+        processor_merchant_id: &common_utils::id_type::MerchantId,
         payment_link_list_constraints: api_models::payments::PaymentLinkListConstraints,
     ) -> CustomResult<Vec<Self>, errors::DatabaseError>;
 }
@@ -24,14 +24,21 @@ pub trait PaymentLinkDbExt: Sized {
 #[async_trait::async_trait]
 impl PaymentLinkDbExt for PaymentLink {
     async fn filter_by_constraints(
-        conn: &PgPooledConn,
-        merchant_id: &common_utils::id_type::MerchantId,
+        conn: &DatabaseConnectionWithContext<'_>,
+        processor_merchant_id: &common_utils::id_type::MerchantId,
         payment_link_list_constraints: api_models::payments::PaymentLinkListConstraints,
     ) -> CustomResult<Vec<Self>, errors::DatabaseError> {
-        let mut filter = <Self as HasTable>::table()
-            .filter(dsl::merchant_id.eq(merchant_id.to_owned()))
-            .order(dsl::created_at.desc())
-            .into_boxed();
+        let mut filter = diesel_models::list::into_boxed_list(
+            <Self as HasTable>::table()
+                .filter(
+                    dsl::processor_merchant_id
+                        .eq(processor_merchant_id.to_owned())
+                        .or(dsl::processor_merchant_id
+                            .is_null()
+                            .and(dsl::merchant_id.eq(processor_merchant_id.to_owned()))),
+                )
+                .order(dsl::created_at.desc()),
+        );
 
         if let Some(created_time) = payment_link_list_constraints.created {
             filter = filter.filter(dsl::created_at.eq(created_time));
@@ -55,7 +62,7 @@ impl PaymentLinkDbExt for PaymentLink {
         logger::debug!(query = %diesel::debug_query::<diesel::pg::Pg, _>(&filter).to_string());
 
         filter
-            .get_results_async(conn)
+            .get_results_async(conn.raw_connection())
             .await
             // The query built here returns an empty Vec when no records are found, and if any error does occur,
             // it would be an internal database error, due to which we are raising a DatabaseError::Unknown error

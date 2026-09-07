@@ -7,6 +7,7 @@ use std::str::FromStr;
 
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use api_models::subscription as subscription_types;
+use error_stack::report;
 use hyperswitch_domain_models::errors;
 use router_env::{
     tracing::{self, instrument},
@@ -14,18 +15,17 @@ use router_env::{
 };
 
 use crate::{
-    core::{api_locking, subscription},
+    core::api_locking,
     headers::X_PROFILE_ID,
     routes::AppState,
     services::{api as oss_api, authentication as auth, authorization::permissions::Permission},
-    types::domain,
 };
 
 fn extract_profile_id(req: &HttpRequest) -> Result<common_utils::id_type::ProfileId, HttpResponse> {
     let header_value = req.headers().get(X_PROFILE_ID).ok_or_else(|| {
         HttpResponse::BadRequest().json(
             errors::api_error_response::ApiErrorResponse::MissingRequiredField {
-                field_name: X_PROFILE_ID,
+                field_name: X_PROFILE_ID.into(),
             },
         )
     })?;
@@ -35,7 +35,7 @@ fn extract_profile_id(req: &HttpRequest) -> Result<common_utils::id_type::Profil
     if profile_str.is_empty() {
         return Err(HttpResponse::BadRequest().json(
             errors::api_error_response::ApiErrorResponse::MissingRequiredField {
-                field_name: X_PROFILE_ID,
+                field_name: X_PROFILE_ID.into(),
             },
         ));
     }
@@ -43,7 +43,7 @@ fn extract_profile_id(req: &HttpRequest) -> Result<common_utils::id_type::Profil
     common_utils::id_type::ProfileId::from_str(profile_str).map_err(|_| {
         HttpResponse::BadRequest().json(
             errors::api_error_response::ApiErrorResponse::InvalidDataValue {
-                field_name: X_PROFILE_ID,
+                field_name: X_PROFILE_ID.into(),
             },
         )
     })
@@ -67,26 +67,133 @@ pub async fn create_subscription(
         &req,
         json_payload.into_inner(),
         move |state, auth: auth::AuthenticationData, payload, _| {
-            let merchant_context = domain::MerchantContext::NormalMerchant(Box::new(
-                domain::Context(auth.merchant_account, auth.key_store),
-            ));
-            subscription::create_subscription(
-                state,
-                merchant_context,
+            subscriptions::create_subscription(
+                state.into(),
+                auth.platform,
                 profile_id.clone(),
                 payload.clone(),
             )
         },
         auth::auth_type(
             &auth::HeaderAuth(auth::ApiKeyAuth {
-                is_connected_allowed: false,
-                is_platform_allowed: false,
+                allow_connected_scope_operation: false,
+                allow_platform_self_operation: false,
             }),
             &auth::JWTAuth {
                 permission: Permission::ProfileSubscriptionWrite,
+                allow_connected: false,
+                allow_platform: false,
             },
             req.headers(),
         ),
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+#[instrument(skip_all)]
+pub async fn pause_subscription(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    subscription_id: web::Path<common_utils::id_type::SubscriptionId>,
+    json_payload: web::Json<subscription_types::PauseSubscriptionRequest>,
+) -> impl Responder {
+    let flow = Flow::PauseSubscription;
+    let subscription_id = subscription_id.into_inner();
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        json_payload.into_inner(),
+        |state, auth: auth::AuthenticationData, payload, _| {
+            subscriptions::pause_subscription(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                subscription_id.clone(),
+                payload.clone(),
+            )
+        },
+        &auth::HeaderAuth(auth::ApiKeyAuth {
+            allow_connected_scope_operation: false,
+            allow_platform_self_operation: false,
+        }),
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+#[instrument(skip_all)]
+pub async fn resume_subscription(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    subscription_id: web::Path<common_utils::id_type::SubscriptionId>,
+    json_payload: web::Json<subscription_types::ResumeSubscriptionRequest>,
+) -> impl Responder {
+    let flow = Flow::ResumeSubscription;
+    let subscription_id = subscription_id.into_inner();
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        json_payload.into_inner(),
+        |state, auth: auth::AuthenticationData, payload, _| {
+            subscriptions::resume_subscription(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                subscription_id.clone(),
+                payload.clone(),
+            )
+        },
+        &auth::HeaderAuth(auth::ApiKeyAuth {
+            allow_connected_scope_operation: false,
+            allow_platform_self_operation: false,
+        }),
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+#[instrument(skip_all)]
+pub async fn cancel_subscription(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    subscription_id: web::Path<common_utils::id_type::SubscriptionId>,
+    json_payload: web::Json<subscription_types::CancelSubscriptionRequest>,
+) -> impl Responder {
+    let flow = Flow::CancelSubscription;
+    let subscription_id = subscription_id.into_inner();
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        json_payload.into_inner(),
+        |state, auth: auth::AuthenticationData, payload, _| {
+            subscriptions::cancel_subscription(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                subscription_id.clone(),
+                payload.clone(),
+            )
+        },
+        &auth::HeaderAuth(auth::ApiKeyAuth {
+            allow_connected_scope_operation: false,
+            allow_platform_self_operation: false,
+        }),
         api_locking::LockAction::NotApplicable,
     ))
     .await
@@ -101,35 +208,59 @@ pub async fn confirm_subscription(
 ) -> impl Responder {
     let flow = Flow::ConfirmSubscription;
     let subscription_id = subscription_id.into_inner();
+    let payload = json_payload.into_inner();
     let profile_id = match extract_profile_id(&req) {
         Ok(id) => id,
         Err(response) => return response,
+    };
+
+    let api_auth = auth::ApiKeyAuth::default();
+
+    let (auth_type, _) = {
+        #[cfg(feature = "v1")]
+        {
+            match auth::check_sdk_auth_and_get_auth(req.headers(), &payload, api_auth) {
+                Ok(auth) => auth,
+                Err(err) => {
+                    return oss_api::log_and_return_error_response(error_stack::report!(err))
+                }
+            }
+        }
+        #[cfg(feature = "v2")]
+        {
+            match auth::check_client_secret_and_get_auth(req.headers(), &payload, api_auth) {
+                Ok(auth) => auth,
+                Err(err) => {
+                    return oss_api::log_and_return_error_response(error_stack::report!(err))
+                }
+            }
+        }
     };
 
     Box::pin(oss_api::server_wrap(
         flow,
         state,
         &req,
-        json_payload.into_inner(),
-        |state, auth: auth::AuthenticationData, payload, _| {
-            let merchant_context = domain::MerchantContext::NormalMerchant(Box::new(
-                domain::Context(auth.merchant_account, auth.key_store),
-            ));
-            subscription::confirm_subscription(
-                state,
-                merchant_context,
+        payload,
+        |state, auth, mut payload, _| {
+            if let Some(client_secret) = auth.client_secret {
+                payload.client_secret = Some(subscription_types::ClientSecret::new(client_secret));
+            }
+
+            subscriptions::confirm_subscription(
+                state.into(),
+                auth.platform,
                 profile_id.clone(),
                 payload.clone(),
                 subscription_id.clone(),
             )
         },
         auth::auth_type(
-            &auth::HeaderAuth(auth::ApiKeyAuth {
-                is_connected_allowed: false,
-                is_platform_allowed: false,
-            }),
+            &*auth_type,
             &auth::JWTAuth {
                 permission: Permission::ProfileSubscriptionWrite,
+                allow_connected: false,
+                allow_platform: false,
             },
             req.headers(),
         ),
@@ -139,35 +270,66 @@ pub async fn confirm_subscription(
 }
 
 #[instrument(skip_all)]
-pub async fn get_subscription_plans(
+pub async fn get_subscription_items(
     state: web::Data<AppState>,
     req: HttpRequest,
-    query: web::Query<subscription_types::GetPlansQuery>,
+    query: web::Query<subscription_types::GetSubscriptionItemsQuery>,
 ) -> impl Responder {
-    let flow = Flow::GetPlansForSubscription;
+    let flow = Flow::GetSubscriptionItemsForSubscription;
     let api_auth = auth::ApiKeyAuth::default();
+    let payload = query.into_inner();
 
     let profile_id = match extract_profile_id(&req) {
         Ok(profile_id) => profile_id,
         Err(response) => return response,
     };
 
-    let auth_data = match auth::is_ephemeral_auth(req.headers(), api_auth) {
-        Ok(auth) => auth,
-        Err(err) => return crate::services::api::log_and_return_error_response(err),
+    let (auth_type, _) = {
+        #[cfg(feature = "v1")]
+        {
+            match auth::check_sdk_auth_and_get_auth(req.headers(), &payload, api_auth) {
+                Ok(auth) => auth,
+                Err(err) => {
+                    return oss_api::log_and_return_error_response(error_stack::report!(err))
+                }
+            }
+        }
+        #[cfg(feature = "v2")]
+        {
+            match auth::check_client_secret_and_get_auth(req.headers(), &payload, api_auth) {
+                Ok(auth) => auth,
+                Err(err) => {
+                    return oss_api::log_and_return_error_response(error_stack::report!(err))
+                }
+            }
+        }
     };
     Box::pin(oss_api::server_wrap(
         flow,
         state,
         &req,
-        query.into_inner(),
-        |state, auth: auth::AuthenticationData, query, _| {
-            let merchant_context = domain::MerchantContext::NormalMerchant(Box::new(
-                domain::Context(auth.merchant_account, auth.key_store),
-            ));
-            subscription::get_subscription_plans(state, merchant_context, profile_id.clone(), query)
+        payload,
+        |state, auth, mut query, _| {
+            if let Some(client_secret) = auth.client_secret {
+                query.client_secret = Some(subscription_types::ClientSecret::new(client_secret));
+            }
+
+            subscriptions::get_subscription_items(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                query,
+            )
         },
-        &*auth_data,
+        auth::auth_type(
+            &*auth_type,
+            &auth::JWTAuth {
+                permission: Permission::ProfileSubscriptionRead,
+                allow_connected: false,
+                allow_platform: false,
+            },
+            req.headers(),
+        ),
         api_locking::LockAction::NotApplicable,
     ))
     .await
@@ -186,29 +348,29 @@ pub async fn get_subscription(
         Ok(id) => id,
         Err(response) => return response,
     };
+
     Box::pin(oss_api::server_wrap(
         flow,
         state,
         &req,
         (),
         |state, auth: auth::AuthenticationData, _, _| {
-            let merchant_context = domain::MerchantContext::NormalMerchant(Box::new(
-                domain::Context(auth.merchant_account, auth.key_store),
-            ));
-            subscription::get_subscription(
-                state,
-                merchant_context,
+            subscriptions::get_subscription(
+                state.into(),
+                auth.platform,
                 profile_id.clone(),
                 subscription_id.clone(),
             )
         },
         auth::auth_type(
             &auth::HeaderAuth(auth::ApiKeyAuth {
-                is_connected_allowed: false,
-                is_platform_allowed: false,
+                allow_connected_scope_operation: false,
+                allow_platform_self_operation: false,
             }),
             &auth::JWTAuth {
                 permission: Permission::ProfileSubscriptionRead,
+                allow_connected: false,
+                allow_platform: false,
             },
             req.headers(),
         ),
@@ -234,20 +396,139 @@ pub async fn create_and_confirm_subscription(
         &req,
         json_payload.into_inner(),
         |state, auth: auth::AuthenticationData, payload, _| {
-            let merchant_context = domain::MerchantContext::NormalMerchant(Box::new(
-                domain::Context(auth.merchant_account, auth.key_store),
-            ));
-            subscription::create_and_confirm_subscription(
-                state,
-                merchant_context,
+            subscriptions::create_and_confirm_subscription(
+                state.into(),
+                auth.platform,
                 profile_id.clone(),
                 payload.clone(),
             )
         },
+        auth::auth_type(
+            &auth::HeaderAuth(auth::ApiKeyAuth {
+                allow_connected_scope_operation: false,
+                allow_platform_self_operation: false,
+            }),
+            &auth::JWTAuth {
+                permission: Permission::ProfileSubscriptionWrite,
+                allow_connected: false,
+                allow_platform: false,
+            },
+            req.headers(),
+        ),
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+/// add support for get subscription estimate
+#[instrument(skip_all)]
+pub async fn get_estimate(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    query: web::Query<subscription_types::EstimateSubscriptionQuery>,
+) -> impl Responder {
+    let flow = Flow::GetSubscriptionEstimate;
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    let api_auth = auth::ApiKeyAuth {
+        allow_connected_scope_operation: false,
+        allow_platform_self_operation: false,
+    };
+    let (auth_type, _auth_flow) =
+        match auth::check_authorization_header_or_get_auth(req.headers(), api_auth) {
+            Ok(auth) => auth,
+            Err(err) => return oss_api::log_and_return_error_response(report!(err)),
+        };
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        query.into_inner(),
+        |state, auth, query, _| {
+            subscriptions::get_estimate(state.into(), auth.platform, profile_id.clone(), query)
+        },
+        &*auth_type,
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+#[instrument(skip_all)]
+pub async fn update_subscription(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    subscription_id: web::Path<common_utils::id_type::SubscriptionId>,
+    json_payload: web::Json<subscription_types::UpdateSubscriptionRequest>,
+) -> impl Responder {
+    let flow = Flow::UpdateSubscription;
+    let subscription_id = subscription_id.into_inner();
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        json_payload.into_inner(),
+        |state, auth: auth::AuthenticationData, payload, _| {
+            subscriptions::update_subscription(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                subscription_id.clone(),
+                payload.clone(),
+            )
+        },
         &auth::HeaderAuth(auth::ApiKeyAuth {
-            is_connected_allowed: false,
-            is_platform_allowed: false,
+            allow_connected_scope_operation: false,
+            allow_platform_self_operation: false,
         }),
+        api_locking::LockAction::NotApplicable,
+    ))
+    .await
+}
+
+#[instrument(skip_all)]
+pub async fn list_subscriptions(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    query: web::Query<subscription_types::ListSubscriptionQuery>,
+) -> impl Responder {
+    let flow = Flow::GetSubscription;
+    let query = query.into_inner();
+    let profile_id = match extract_profile_id(&req) {
+        Ok(id) => id,
+        Err(response) => return response,
+    };
+
+    Box::pin(oss_api::server_wrap(
+        flow,
+        state,
+        &req,
+        (),
+        |state, auth: auth::AuthenticationData, _, _| {
+            subscriptions::list_subscriptions(
+                state.into(),
+                auth.platform,
+                profile_id.clone(),
+                query.clone(),
+            )
+        },
+        auth::auth_type(
+            &auth::HeaderAuth(auth::ApiKeyAuth {
+                allow_connected_scope_operation: false,
+                allow_platform_self_operation: false,
+            }),
+            &auth::JWTAuth {
+                permission: Permission::ProfileSubscriptionRead,
+                allow_connected: false,
+                allow_platform: false,
+            },
+            req.headers(),
+        ),
         api_locking::LockAction::NotApplicable,
     ))
     .await

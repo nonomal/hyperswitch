@@ -5,7 +5,7 @@ use common_utils::{
     request::{Method, Request, RequestBuilder, RequestContent},
 };
 use hyperswitch_domain_models::{router_data::ErrorResponse, router_data_v2::RouterDataV2};
-use masking::Maskable;
+use hyperswitch_masking::Maskable;
 use serde_json::json;
 
 use crate::{
@@ -22,6 +22,8 @@ pub trait ConnectorV2:
     + api::payments_v2::PaymentV2
     + api::ConnectorRedirectResponse
     + webhooks::IncomingWebhook
+    + api::merchant_connector_webhook_management_v2::WebhookRegisterV2
+    + api::merchant_connector_webhook_management_v2::WebhookGenerateSecretV2
     + api::ConnectorAuthenticationTokenV2
     + api::ConnectorAccessTokenV2
     + api::disputes_v2::DisputeV2
@@ -44,6 +46,8 @@ impl<
             + api::ConnectorRedirectResponse
             + Send
             + webhooks::IncomingWebhook
+            + api::merchant_connector_webhook_management_v2::WebhookRegisterV2
+            + api::merchant_connector_webhook_management_v2::WebhookGenerateSecretV2
             + api::ConnectorAuthenticationTokenV2
             + api::ConnectorAccessTokenV2
             + api::disputes_v2::DisputeV2
@@ -212,6 +216,7 @@ pub trait ConnectorIntegrationV2<Flow, ResourceCommonData, Req, Resp>:
             status_code: res.status_code,
             attempt_status: None,
             connector_transaction_id: None,
+            connector_response_reference_id: None,
             network_advice_code: None,
             network_decline_code: None,
             network_error_message: None,
@@ -231,7 +236,7 @@ pub trait ConnectorIntegrationV2<Flow, ResourceCommonData, Req, Resp>:
     fn get_certificate(
         &self,
         _req: &RouterDataV2<Flow, ResourceCommonData, Req, Resp>,
-    ) -> CustomResult<Option<masking::Secret<String>>, errors::ConnectorError> {
+    ) -> CustomResult<Option<hyperswitch_masking::Secret<String>>, errors::ConnectorError> {
         Ok(None)
     }
 
@@ -239,7 +244,7 @@ pub trait ConnectorIntegrationV2<Flow, ResourceCommonData, Req, Resp>:
     fn get_certificate_key(
         &self,
         _req: &RouterDataV2<Flow, ResourceCommonData, Req, Resp>,
-    ) -> CustomResult<Option<masking::Secret<String>>, errors::ConnectorError> {
+    ) -> CustomResult<Option<hyperswitch_masking::Secret<String>>, errors::ConnectorError> {
         Ok(None)
     }
 }

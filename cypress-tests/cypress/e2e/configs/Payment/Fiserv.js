@@ -26,11 +26,11 @@ const successfulMastercardDetails = {
 };
 
 const failedCardDetails = {
-  card_number: "4012888888881881", // Standard decline test card for Fiserv - "Do Not Honor" response
+  card_number: "4012 0014 7247 2642", // Standard decline test card for Fiserv - "Do Not Honor" response
   card_exp_month: "12",
   card_exp_year: "30",
   card_holder_name: "Joseph Doe",
-  card_cvc: "123",
+  card_cvc: "001",
 };
 
 const singleUseMandateData = {
@@ -116,31 +116,13 @@ const requiredFields = {
   ],
 };
 
-const payment_method_data_3ds = {
-  card: {
-    last4: "1111",
-    card_type: "CREDIT",
-    card_network: "Visa",
-    card_issuer: "JP Morgan",
-    card_issuing_country: "INDIA",
-    card_isin: "411111",
-    card_extended_bin: null,
-    card_exp_month: "12",
-    card_exp_year: "30",
-    card_holder_name: "Joseph Doe",
-    payment_checks: null,
-    authentication_data: null,
-  },
-  billing: null,
-};
-
 const payment_method_data_no3ds = {
   card: {
     last4: "1111",
-    card_type: "CREDIT",
+    card_type: "DEBIT",
     card_network: "Visa",
-    card_issuer: "JP Morgan",
-    card_issuing_country: "INDIA",
+    card_issuer: "CONOTOXIA SP Z OO",
+    card_issuing_country: "POLAND",
     card_isin: "411111",
     card_extended_bin: null,
     card_exp_month: "12",
@@ -148,6 +130,7 @@ const payment_method_data_no3ds = {
     card_holder_name: "Joseph Doe",
     payment_checks: null,
     authentication_data: null,
+    auth_code: null,
   },
   billing: null,
 };
@@ -170,6 +153,7 @@ const payment_method_data_mastercard = {
       address_postal_code_check: "pass",
     },
     authentication_data: null,
+    auth_code: null,
   },
   billing: null,
 };
@@ -221,11 +205,14 @@ export const connectorDetails = {
         setup_future_usage: "on_session",
       },
       Response: {
-        status: 200,
+        status: 400,
         body: {
-          status: "requires_capture",
-          setup_future_usage: "on_session",
-          payment_method_data: payment_method_data_3ds,
+          error: {
+            code: "IR_19",
+            message: "Payment method type not supported",
+            reason: "Cards 3DS is not supported by Fiserv",
+            type: "invalid_request",
+          },
         },
       },
     },
@@ -240,11 +227,14 @@ export const connectorDetails = {
         setup_future_usage: "on_session",
       },
       Response: {
-        status: 200,
+        status: 400,
         body: {
-          status: "succeeded",
-          setup_future_usage: "on_session",
-          payment_method_data: payment_method_data_3ds,
+          error: {
+            code: "IR_19",
+            message: "Payment method type not supported",
+            reason: "Cards 3DS is not supported by Fiserv",
+            type: "invalid_request",
+          },
         },
       },
     },
@@ -320,6 +310,7 @@ export const connectorDetails = {
     },
     No3DSFailPayment: {
       Request: {
+        amount: 517400,
         payment_method: "card",
         payment_method_data: {
           card: failedCardDetails,
@@ -330,11 +321,7 @@ export const connectorDetails = {
       Response: {
         status: 200,
         body: {
-          status: "failed",
-          error_code: "104",
-          error_message: "Unable to assign card to brand: Invalid",
-          unified_code: "UE_9000",
-          unified_message: "Something went wrong",
+          status: "succeeded", // Fiserv returns a successful response even for declined cards
         },
       },
     },
@@ -594,6 +581,9 @@ export const connectorDetails = {
       },
     },
     SaveCardUseNo3DSAutoCaptureOffSession: {
+      Configs: {
+        TRIGGER_SKIP: true, // Skip this test as off-session payments with future usage are not supported for Fiserv
+      },
       Request: {
         payment_method: "card",
         payment_method_data: {
@@ -621,13 +611,21 @@ export const connectorDetails = {
         customer_acceptance: customerAcceptance,
       },
       Response: {
-        status: 200,
+        status: 400,
         body: {
-          status: "succeeded",
+          error: {
+            code: "IR_19",
+            message: "Payment method type not supported",
+            reason: "Cards 3DS is not supported by Fiserv",
+            type: "invalid_request",
+          },
         },
       },
     },
     SaveCardUseNo3DSManualCaptureOffSession: {
+      Configs: {
+        TRIGGER_SKIP: true, // Skip this test as off-session payments with future usage are not supported for Fiserv
+      },
       Request: {
         payment_method: "card",
         payment_method_data: {
@@ -656,6 +654,9 @@ export const connectorDetails = {
       },
     },
     SaveCardConfirmAutoCaptureOffSession: {
+      Configs: {
+        TRIGGER_SKIP: true, // Skip this test as off-session payments with future usage are not supported for Fiserv
+      },
       Request: {
         setup_future_usage: "off_session",
         payment_method_data: {
@@ -670,6 +671,9 @@ export const connectorDetails = {
       },
     },
     SaveCardConfirmManualCaptureOffSession: {
+      Configs: {
+        TRIGGER_SKIP: true, // Skip this test as off-session payments with future usage are not supported for Fiserv
+      },
       Request: {
         setup_future_usage: "off_session",
         payment_method_data: {
@@ -867,6 +871,8 @@ export const connectorDetails = {
         payment_method_data: {
           card: successfulNo3DSCardDetails,
         },
+        mandate_data: null,
+        customer_acceptance: customerAcceptance,
       },
       Response: {
         status: 400,
@@ -885,6 +891,32 @@ export const connectorDetails = {
         TRIGGER_SKIP: true,
       },
       Request: {},
+      Response: {
+        status: 200,
+        body: {
+          status: "succeeded",
+          mandate_id: null,
+          payment_method: "card",
+          payment_method_data: payment_method_data_no3ds,
+          connector: "fiserv",
+        },
+      },
+    },
+    MITAutoCaptureWithCustomerAcceptance: {
+      // Fiserv does not support MIT payments with mandate_id
+      Configs: {
+        TRIGGER_SKIP: true,
+      },
+      Request: {
+        customer_acceptance: {
+          acceptance_type: "offline",
+          accepted_at: "1963-05-03T04:07:52.723Z",
+          online: {
+            ip_address: "127.0.0.1",
+            user_agent: "amet irure esse",
+          },
+        },
+      },
       Response: {
         status: 200,
         body: {

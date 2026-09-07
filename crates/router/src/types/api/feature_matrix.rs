@@ -18,6 +18,9 @@ impl FeatureMatrixConnectorData {
     ) -> CustomResult<ConnectorEnum, errors::ApiErrorResponse> {
         match enums::Connector::from_str(connector_name) {
             Ok(name) => match name {
+                enums::Connector::AbsaSanlam => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::AbsaSanlam::new())))
+                }
                 enums::Connector::Aci => Ok(ConnectorEnum::Old(Box::new(connector::Aci::new()))),
                 enums::Connector::Adyen => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Adyen::new())))
@@ -67,12 +70,9 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Bluesnap => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Bluesnap::new())))
                 }
-                enums::Connector::Bluecode => {
-                    Ok(ConnectorEnum::Old(Box::new(connector::Bluecode::new())))
+                enums::Connector::Calida => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Calida::new())))
                 }
-                // enums::Connector::Bluecode => {
-                //     Ok(ConnectorEnum::Old(Box::new(connector::Bluecode::new())))
-                // }
                 enums::Connector::Boku => Ok(ConnectorEnum::Old(Box::new(connector::Boku::new()))),
                 enums::Connector::Braintree => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Braintree::new())))
@@ -169,8 +169,14 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Elavon => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Elavon::new())))
                 }
+                enums::Connector::Envoy => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Envoy::new())))
+                }
                 enums::Connector::Facilitapay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Facilitapay::new())))
+                }
+                enums::Connector::Finix => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Finix::new())))
                 }
                 enums::Connector::Fiserv => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Fiserv::new())))
@@ -178,6 +184,9 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Fiservemea => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Fiservemea::new())))
                 }
+                enums::Connector::Fiservcommercehub => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Fiservcommercehub::new(),
+                ))),
                 enums::Connector::Fiuu => Ok(ConnectorEnum::Old(Box::new(connector::Fiuu::new()))),
                 enums::Connector::Forte => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Forte::new())))
@@ -191,6 +200,12 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Gigadat => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Gigadat::new())))
                 }
+                enums::Connector::Ilixium => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Ilixium::new())))
+                }
+                enums::Connector::Givepayments => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Givepayments::new())))
+                }
                 enums::Connector::Globalpay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Globalpay::new())))
                 }
@@ -199,6 +214,9 @@ impl FeatureMatrixConnectorData {
                 }
                 enums::Connector::Gocardless => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Gocardless::new())))
+                }
+                enums::Connector::GotymeSanlam => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::GotymeSanlam::new())))
                 }
                 enums::Connector::Hipay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Hipay::new())))
@@ -209,9 +227,15 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::HyperswitchVault => {
                     Ok(ConnectorEnum::Old(Box::new(&connector::HyperswitchVault)))
                 }
+                enums::Connector::Hyperpg => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Hyperpg::new())))
+                }
                 enums::Connector::Iatapay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Iatapay::new())))
                 }
+                enums::Connector::Imerchantsolutions => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Imerchantsolutions::new(),
+                ))),
                 enums::Connector::Inespay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Inespay::new())))
                 }
@@ -266,6 +290,15 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Paytm => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Paytm::new())))
                 }
+                enums::Connector::Payconex => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Payconex::new())))
+                }
+                enums::Connector::Citigate => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Citigate::new())))
+                }
+                enums::Connector::Worldpayraft => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Worldpayraft::new())))
+                }
                 // "payeezy" => Ok(ConnectorIntegrationEnum::Old(Box::new(&connector::Payeezy)), As psync and rsync are not supported by this connector, it is added as template code for future usage
                 // enums::Connector::Payload => {
                 //     Ok(ConnectorEnum::Old(Box::new(connector::Paybload::new())))
@@ -273,6 +306,12 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Payload => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Payload::new())))
                 }
+                enums::Connector::Payjustnow => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Payjustnow::new())))
+                }
+                enums::Connector::Payjustnowinstore => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Payjustnowinstore::new(),
+                ))),
                 enums::Connector::Payme => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Payme::new())))
                 }
@@ -287,7 +326,7 @@ impl FeatureMatrixConnectorData {
                     Ok(ConnectorEnum::Old(Box::new(connector::Placetopay::new())))
                 }
                 enums::Connector::Powertranz => {
-                    Ok(ConnectorEnum::Old(Box::new(&connector::Powertranz)))
+                    Ok(ConnectorEnum::Old(Box::new(connector::Powertranz::new())))
                 }
                 enums::Connector::Prophetpay => {
                     Ok(ConnectorEnum::Old(Box::new(&connector::Prophetpay)))
@@ -303,6 +342,9 @@ impl FeatureMatrixConnectorData {
                 }
                 enums::Connector::Redsys => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Redsys::new())))
+                }
+                enums::Connector::Revolv3 => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Revolv3::new())))
                 }
                 enums::Connector::Santander => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Santander::new())))
@@ -325,6 +367,9 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Worldpay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Worldpay::new())))
                 }
+                enums::Connector::Worldpaymodular => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Worldpaymodular::new(),
+                ))),
                 enums::Connector::Worldpayvantiv => Ok(ConnectorEnum::Old(Box::new(
                     connector::Worldpayvantiv::new(),
                 ))),
@@ -366,6 +411,12 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Tokenio => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Tokenio::new())))
                 }
+                enums::Connector::Truelayer => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Truelayer::new())))
+                }
+                enums::Connector::Trustly => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::Trustly::new())))
+                }
                 enums::Connector::Trustpay => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Trustpay::new())))
                 }
@@ -373,6 +424,9 @@ impl FeatureMatrixConnectorData {
                     connector::Trustpayments::new(),
                 ))),
                 enums::Connector::Tsys => Ok(ConnectorEnum::Old(Box::new(connector::Tsys::new()))),
+                enums::Connector::TsysTransit => {
+                    Ok(ConnectorEnum::Old(Box::new(connector::TsysTransit::new())))
+                }
                 // enums::Connector::UnifiedAuthenticationService => Ok(ConnectorEnum::Old(Box::new(
                 //     connector::UnifiedAuthenticationService,
                 // ))),
@@ -391,14 +445,18 @@ impl FeatureMatrixConnectorData {
                     Ok(ConnectorEnum::Old(Box::new(connector::Plaid::new())))
                 }
                 enums::Connector::Signifyd => {
-                    Ok(ConnectorEnum::Old(Box::new(&connector::Signifyd)))
+                    Ok(ConnectorEnum::Old(Box::new(connector::Signifyd::new())))
                 }
                 enums::Connector::Silverflow => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Silverflow::new())))
                 }
+                enums::Connector::Zift => Ok(ConnectorEnum::Old(Box::new(connector::Zift::new()))),
                 enums::Connector::Riskified => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Riskified::new())))
                 }
+                enums::Connector::Cybersourcedecisionmanager => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Cybersourcedecisionmanager::new(),
+                ))),
                 enums::Connector::Gpayments => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Gpayments::new())))
                 }
@@ -408,7 +466,10 @@ impl FeatureMatrixConnectorData {
                 enums::Connector::Taxjar => {
                     Ok(ConnectorEnum::Old(Box::new(connector::Taxjar::new())))
                 }
-                enums::Connector::Cardinal => {
+                enums::Connector::Interpayments => Ok(ConnectorEnum::Old(Box::new(
+                    connector::Interpayments::new(),
+                ))),
+                enums::Connector::Cardinal | enums::Connector::Juspay => {
                     Err(report!(errors::ConnectorError::InvalidConnectorName)
                         .attach_printable(format!("invalid connector name: {connector_name}")))
                     .change_context(errors::ApiErrorResponse::InternalServerError)

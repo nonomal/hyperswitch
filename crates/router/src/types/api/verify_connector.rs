@@ -47,16 +47,17 @@ impl VerifyConnectorData {
             setup_future_usage: None,
             payment_experience: None,
             payment_method_type: None,
-            statement_descriptor: None,
             setup_mandate_details: None,
             complete_authorize_url: None,
             related_transaction_id: None,
-            statement_descriptor_suffix: None,
             request_extended_authorization: None,
             request_incremental_authorization: false,
             authentication_data: None,
+            ucs_authentication_data: None,
+            force_3ds_challenge: None,
             customer_acceptance: None,
             split_payments: None,
+            guest_customer: None,
             merchant_order_reference_id: None,
             integrity_object: None,
             additional_payment_method_data: None,
@@ -71,6 +72,15 @@ impl VerifyConnectorData {
             enable_overcapture: None,
             is_stored_credential: None,
             mit_category: None,
+            billing_descriptor: None,
+            is_account_funded_transaction: None,
+            recipient_details: None,
+            business_country: None,
+            tokenization: None,
+            partner_merchant_identifier_details: None,
+            feature_metadata: None,
+            installment_details: None,
+            connector_intent_metadata: None,
         }
     }
 
@@ -127,6 +137,7 @@ impl VerifyConnectorData {
             frm_metadata: None,
             refund_id: None,
             dispute_id: None,
+            payout_id: None,
             connector_response: None,
             integrity_check: Ok(()),
             additional_merchant_data: None,
@@ -139,6 +150,11 @@ impl VerifyConnectorData {
             l2_l3_data: None,
             minor_amount_capturable: None,
             authorized_amount: None,
+            customer_document_details: None,
+            feature_data: None,
+            sender_payment_instrument_id: None,
+            connector_returned_payment_method_details: None,
+            customer_date_of_birth: None,
         }
     }
 }
@@ -162,10 +178,14 @@ pub trait VerifyConnector {
             })?
             .ok_or(errors::ApiErrorResponse::InternalServerError)?;
 
-        let response =
-            services::call_connector_api(&state.to_owned(), request, "verify_connector_request")
-                .await
-                .change_context(errors::ApiErrorResponse::InternalServerError)?;
+        let response = services::call_connector_api(
+            &state.to_owned(),
+            request,
+            "verify_connector_request",
+            None,
+        )
+        .await
+        .change_context(errors::ApiErrorResponse::InternalServerError)?;
 
         match response {
             Ok(_) => Ok(services::ApplicationResponse::StatusOk),

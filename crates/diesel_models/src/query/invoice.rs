@@ -1,21 +1,21 @@
-use diesel::{associations::HasTable, ExpressionMethods};
+use diesel::{associations::HasTable, BoolExpressionMethods, ExpressionMethods};
 
 use super::generics;
 use crate::{
     invoice::{Invoice, InvoiceNew, InvoiceUpdate},
     schema::invoice::dsl,
-    PgPooledConn, StorageResult,
+    DatabaseConnectionWithContext, StorageResult,
 };
 
 impl InvoiceNew {
-    pub async fn insert(self, conn: &PgPooledConn) -> StorageResult<Invoice> {
+    pub async fn insert(self, conn: &DatabaseConnectionWithContext<'_>) -> StorageResult<Invoice> {
         generics::generic_insert(conn, self).await
     }
 }
 
 impl Invoice {
     pub async fn find_invoice_by_id_invoice_id(
-        conn: &PgPooledConn,
+        conn: &DatabaseConnectionWithContext<'_>,
         id: String,
     ) -> StorageResult<Self> {
         generics::generic_find_one::<<Self as HasTable>::Table, _, _>(
@@ -26,7 +26,7 @@ impl Invoice {
     }
 
     pub async fn update_invoice_entry(
-        conn: &PgPooledConn,
+        conn: &DatabaseConnectionWithContext<'_>,
         id: String,
         invoice_update: InvoiceUpdate,
     ) -> StorageResult<Self> {
@@ -40,7 +40,7 @@ impl Invoice {
     }
 
     pub async fn list_invoices_by_subscription_id(
-        conn: &PgPooledConn,
+        conn: &DatabaseConnectionWithContext<'_>,
         subscription_id: String,
         limit: Option<i64>,
         offset: Option<i64>,
@@ -65,5 +65,19 @@ impl Invoice {
             )
             .await
         }
+    }
+
+    pub async fn get_invoice_by_subscription_id_connector_invoice_id(
+        conn: &DatabaseConnectionWithContext<'_>,
+        subscription_id: String,
+        connector_invoice_id: common_utils::id_type::InvoiceId,
+    ) -> StorageResult<Option<Self>> {
+        generics::generic_find_one_optional::<<Self as HasTable>::Table, _, _>(
+            conn,
+            dsl::subscription_id
+                .eq(subscription_id.to_owned())
+                .and(dsl::connector_invoice_id.eq(connector_invoice_id.to_owned())),
+        )
+        .await
     }
 }

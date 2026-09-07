@@ -9,11 +9,14 @@ use hyperswitch_domain_models::{
     payment_method_data::{Card, PaymentMethodData},
     payments::{payment_attempt::PaymentAttempt, PaymentIntent, PaymentStatusData},
 };
-use masking::PeekInterface;
+use hyperswitch_masking::PeekInterface;
 use router_env::logger;
 use serde::{Deserialize, Serialize};
 
-use crate::{db::StorageInterface, routes::SessionState, types, workflows::revenue_recovery};
+use crate::{
+    core::revenue_recovery::schedule::StaticLadderProgress, db::StorageInterface,
+    routes::SessionState, types, workflows::revenue_recovery,
+};
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct RevenueRecoveryWorkflowTrackingData {
     pub merchant_id: id_type::MerchantId,
@@ -23,6 +26,14 @@ pub struct RevenueRecoveryWorkflowTrackingData {
     pub billing_mca_id: id_type::MerchantConnectorAccountId,
     pub revenue_recovery_retry: enums::RevenueRecoveryAlgorithmType,
     pub invoice_scheduled_time: Option<time::PrimitiveDateTime>,
+    /// Standardised error code for the failed attempt that motivated this retry chain,
+    #[serde(default)]
+    pub prev_attempt_error_code: Option<enums::StandardisedCode>,
+    /// Adaptive retry scheduling state — how far down the static ladder this invoice has
+    /// been. Only meaningful on the CALCULATE row, which is reopened rather than recreated
+    /// and so survives for the whole recovery lifecycle of an invoice.
+    #[serde(default)]
+    pub static_ladder_progress: Option<StaticLadderProgress>,
 }
 
 #[derive(Debug, Clone)]
@@ -55,9 +66,25 @@ impl RevenueRecoveryPaymentData {
             }
             enums::RevenueRecoveryAlgorithmType::Cascading => {
                 logger::info!("Cascading type found for Revenue Recovery retry payment");
+                let connector = payment_attempt.connector.as_ref().and_then(|c| {
+                    c.parse::<common_enums::connector_enums::Connector>()
+                        .map_err(|e| {
+                            logger::error!(
+                                "Failed to parse connector {:?} for payment_attempt {:?}: {:?}",
+                                c,
+                                payment_attempt.payment_id,
+                                e
+                            )
+                        })
+                        .ok()
+                })?;
+                let dimensions = crate::core::configs::dimension_state::Dimensions::new()
+                    .with_processor_merchant_id(merchant_id.clone().into())
+                    .with_connector(connector);
                 revenue_recovery::get_schedule_time_to_retry_mit_payments(
                     state.store.as_ref(),
-                    merchant_id,
+                    state.superposition_service.as_ref(),
+                    &dimensions,
                     retry_count,
                 )
                 .await
@@ -74,6 +101,54 @@ pub struct RevenueRecoverySettings {
     pub recovery_timestamp: RecoveryTimestamp,
     pub card_config: RetryLimitsConfig,
     pub redis_ttl_in_seconds: i64,
+    #[serde(default)]
+    pub retry_stats_lock: RetryStatsLockSettings,
+    /// Fallback hour-of-day (UTC, 0–23) the MathModel schedules a retry at when a cluster has no
+    /// usable hour-of-day history. Overridable per environment via the config file's
+    /// `[revenue_recovery]` section or the `ROUTER__REVENUE_RECOVERY__DEFAULT_RETRY_HOUR_UTC` env var;
+    /// when omitted it defaults to noon UTC (see [`DefaultRetryHour`]).
+    #[serde(default)]
+    pub default_retry_hour_utc: DefaultRetryHour,
+}
+
+/// Redis distributed-lock settings for revenue-recovery retry-stats recording
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetryStatsLockSettings {
+    /// TTL on the per-cluster-key lock
+    pub redis_lock_expiry_seconds: u32,
+    /// Delay between successive attempts to acquire a contended lock.
+    pub delay_between_retries_in_milliseconds: u32,
+}
+
+impl Default for RetryStatsLockSettings {
+    fn default() -> Self {
+        Self {
+            redis_lock_expiry_seconds: 10,
+            delay_between_retries_in_milliseconds: 100,
+        }
+    }
+}
+
+impl RetryStatsLockSettings {
+    pub fn lock_retries(&self) -> u32 {
+        self.redis_lock_expiry_seconds
+            .saturating_mul(1000)
+            .checked_div(self.delay_between_retries_in_milliseconds)
+            .unwrap_or(1)
+    }
+}
+
+/// Fallback hour-of-day (UTC, 0–23) for the MathModel. A newtype so its `Default` (noon UTC = 12) is
+/// carried automatically by both `#[derive(Default)]` on the settings and serde's `#[serde(default)]`
+/// — the value lives in exactly one place, with no field-list repetition.
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+pub struct DefaultRetryHour(pub u8);
+
+impl Default for DefaultRetryHour {
+    fn default() -> Self {
+        Self(12)
+    }
 }
 
 #[derive(Debug, serde::Deserialize, Clone)]
@@ -83,6 +158,7 @@ pub struct RecoveryTimestamp {
     pub reopen_workflow_buffer_time_in_seconds: i64,
     pub max_random_schedule_delay_in_seconds: i64,
     pub redis_ttl_buffer_in_seconds: i64,
+    pub unretried_invoice_schedule_time_offset_seconds: i64,
 }
 
 impl Default for RecoveryTimestamp {
@@ -93,6 +169,7 @@ impl Default for RecoveryTimestamp {
             reopen_workflow_buffer_time_in_seconds: 60,
             max_random_schedule_delay_in_seconds: 300,
             redis_ttl_buffer_in_seconds: 300,
+            unretried_invoice_schedule_time_offset_seconds: 300,
         }
     }
 }

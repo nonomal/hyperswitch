@@ -45,9 +45,9 @@ use hyperswitch_interfaces::{
     errors,
     events::connector_api_logs::ConnectorEvent,
     types::{self, Response},
-    webhooks::{IncomingWebhook, IncomingWebhookRequestDetails},
+    webhooks::{IncomingWebhook, IncomingWebhookRequestDetails, WebhookContext},
 };
-use masking::{Mask, PeekInterface};
+use hyperswitch_masking::{Mask, PeekInterface};
 use router_env::logger;
 use transformers as klarna;
 
@@ -93,7 +93,8 @@ impl ConnectorCommon for Klarna {
     fn get_auth_header(
         &self,
         auth_type: &ConnectorAuthType,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         let auth = klarna::KlarnaAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
         let encoded_api_key =
@@ -131,6 +132,7 @@ impl ConnectorCommon for Klarna {
             reason,
             attempt_status: None,
             connector_transaction_id: None,
+            connector_response_reference_id: None,
             network_advice_code: None,
             network_decline_code: None,
             network_error_message: None,
@@ -169,7 +171,8 @@ where
         &self,
         req: &RouterData<Flow, Request, Response>,
         _connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         let mut header = vec![(
             headers::CONTENT_TYPE.to_string(),
             types::PaymentsAuthorizeType::get_content_type(self)
@@ -203,7 +206,8 @@ impl ConnectorIntegration<Session, PaymentsSessionData, PaymentsResponseData> fo
         &self,
         req: &PaymentsSessionRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -311,7 +315,8 @@ impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> fo
         &self,
         req: &PaymentsCaptureRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -410,7 +415,8 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Kla
         &self,
         req: &PaymentsSyncRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -497,7 +503,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         &self,
         req: &PaymentsAuthorizeRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -579,6 +586,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::DirectCarrierBilling
                         | common_enums::PaymentMethodType::Efecty
                         | common_enums::PaymentMethodType::Eft
+                        | common_enums::PaymentMethodType::EftDebitOrder
                         | common_enums::PaymentMethodType::Eps
                         | common_enums::PaymentMethodType::Evoucher
                         | common_enums::PaymentMethodType::Giropay
@@ -613,6 +621,11 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Paypal
                         | common_enums::PaymentMethodType::Paze
                         | common_enums::PaymentMethodType::Pix
+                        | common_enums::PaymentMethodType::PixKey
+                        | common_enums::PaymentMethodType::PixEmv
+                        | common_enums::PaymentMethodType::PixQr
+                        | common_enums::PaymentMethodType::PixAutomaticoPush
+                        | common_enums::PaymentMethodType::PixAutomaticoQr
                         | common_enums::PaymentMethodType::PaySafeCard
                         | common_enums::PaymentMethodType::Przelewy24
                         | common_enums::PaymentMethodType::Pse
@@ -620,6 +633,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::RedPagos
                         | common_enums::PaymentMethodType::SamsungPay
                         | common_enums::PaymentMethodType::Sepa
+                        | common_enums::PaymentMethodType::SepaGuarenteedDebit
                         | common_enums::PaymentMethodType::SepaBankTransfer
                         | common_enums::PaymentMethodType::Sofort
                         | common_enums::PaymentMethodType::Swish
@@ -628,6 +642,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Twint
                         | common_enums::PaymentMethodType::UpiCollect
                         | common_enums::PaymentMethodType::UpiIntent
+                        | common_enums::PaymentMethodType::UpiQr
                         | common_enums::PaymentMethodType::Venmo
                         | common_enums::PaymentMethodType::Vipps
                         | common_enums::PaymentMethodType::Walley
@@ -638,6 +653,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::InstantBankTransfer
                         | common_enums::PaymentMethodType::InstantBankTransferFinland
                         | common_enums::PaymentMethodType::InstantBankTransferPoland
+                        | common_enums::PaymentMethodType::Qris
                         | common_enums::PaymentMethodType::MiniStop
                         | common_enums::PaymentMethodType::FamilyMart
                         | common_enums::PaymentMethodType::Seicomart
@@ -651,7 +667,12 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::OpenBankingPIS
                         | common_enums::PaymentMethodType::RevolutPay
                         | common_enums::PaymentMethodType::IndonesianBankTransfer
-                        | common_enums::PaymentMethodType::Breadpay,
+                        | common_enums::PaymentMethodType::Breadpay
+                        | common_enums::PaymentMethodType::Payjustnow
+                        | common_enums::PaymentMethodType::OpenBanking
+                        | common_enums::PaymentMethodType::Payshap
+                        | common_enums::PaymentMethodType::PayshapProxy
+                        | common_enums::PaymentMethodType::NetworkToken,
                     ) => Err(error_stack::report!(errors::ConnectorError::NotSupported {
                         message: payment_method_type.to_string(),
                         connector: "klarna",
@@ -703,6 +724,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::DirectCarrierBilling
                         | common_enums::PaymentMethodType::Efecty
                         | common_enums::PaymentMethodType::Eft
+                        | common_enums::PaymentMethodType::EftDebitOrder
                         | common_enums::PaymentMethodType::Eps
                         | common_enums::PaymentMethodType::Evoucher
                         | common_enums::PaymentMethodType::Giropay
@@ -737,14 +759,21 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Paypal
                         | common_enums::PaymentMethodType::Paze
                         | common_enums::PaymentMethodType::Pix
+                        | common_enums::PaymentMethodType::PixKey
+                        | common_enums::PaymentMethodType::PixEmv
+                        | common_enums::PaymentMethodType::PixQr
+                        | common_enums::PaymentMethodType::PixAutomaticoPush
+                        | common_enums::PaymentMethodType::PixAutomaticoQr
                         | common_enums::PaymentMethodType::PaySafeCard
                         | common_enums::PaymentMethodType::Przelewy24
                         | common_enums::PaymentMethodType::Pse
+                        | common_enums::PaymentMethodType::Qris
                         | common_enums::PaymentMethodType::RedCompra
                         | common_enums::PaymentMethodType::RedPagos
                         | common_enums::PaymentMethodType::SamsungPay
                         | common_enums::PaymentMethodType::Sepa
                         | common_enums::PaymentMethodType::SepaBankTransfer
+                        | common_enums::PaymentMethodType::SepaGuarenteedDebit
                         | common_enums::PaymentMethodType::Sofort
                         | common_enums::PaymentMethodType::Swish
                         | common_enums::PaymentMethodType::TouchNGo
@@ -752,6 +781,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Twint
                         | common_enums::PaymentMethodType::UpiCollect
                         | common_enums::PaymentMethodType::UpiIntent
+                        | common_enums::PaymentMethodType::UpiQr
                         | common_enums::PaymentMethodType::Venmo
                         | common_enums::PaymentMethodType::Vipps
                         | common_enums::PaymentMethodType::Walley
@@ -776,7 +806,12 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Skrill
                         | common_enums::PaymentMethodType::IndonesianBankTransfer
                         | common_enums::PaymentMethodType::RevolutPay
-                        | common_enums::PaymentMethodType::Breadpay,
+                        | common_enums::PaymentMethodType::Breadpay
+                        | common_enums::PaymentMethodType::Payjustnow
+                        | common_enums::PaymentMethodType::OpenBanking
+                        | common_enums::PaymentMethodType::Payshap
+                        | common_enums::PaymentMethodType::PayshapProxy
+                        | common_enums::PaymentMethodType::NetworkToken,
                     ) => Err(error_stack::report!(errors::ConnectorError::NotSupported {
                         message: payment_method_type.to_string(),
                         connector: "klarna",
@@ -815,6 +850,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Bacs
                         | common_enums::PaymentMethodType::BancontactCard
                         | common_enums::PaymentMethodType::Becs
+                        | common_enums::PaymentMethodType::EftDebitOrder
                         | common_enums::PaymentMethodType::Benefit
                         | common_enums::PaymentMethodType::Bizum
                         | common_enums::PaymentMethodType::Blik
@@ -869,6 +905,11 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Paypal
                         | common_enums::PaymentMethodType::Paze
                         | common_enums::PaymentMethodType::Pix
+                        | common_enums::PaymentMethodType::PixKey
+                        | common_enums::PaymentMethodType::PixEmv
+                        | common_enums::PaymentMethodType::PixQr
+                        | common_enums::PaymentMethodType::PixAutomaticoPush
+                        | common_enums::PaymentMethodType::PixAutomaticoQr
                         | common_enums::PaymentMethodType::PaySafeCard
                         | common_enums::PaymentMethodType::Przelewy24
                         | common_enums::PaymentMethodType::Pse
@@ -876,6 +917,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::RedPagos
                         | common_enums::PaymentMethodType::SamsungPay
                         | common_enums::PaymentMethodType::Sepa
+                        | common_enums::PaymentMethodType::SepaGuarenteedDebit
                         | common_enums::PaymentMethodType::SepaBankTransfer
                         | common_enums::PaymentMethodType::Sofort
                         | common_enums::PaymentMethodType::Swish
@@ -884,6 +926,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Twint
                         | common_enums::PaymentMethodType::UpiCollect
                         | common_enums::PaymentMethodType::UpiIntent
+                        | common_enums::PaymentMethodType::UpiQr
                         | common_enums::PaymentMethodType::Venmo
                         | common_enums::PaymentMethodType::Vipps
                         | common_enums::PaymentMethodType::Walley
@@ -906,8 +949,14 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Flexiti
                         | common_enums::PaymentMethodType::OpenBankingPIS
                         | common_enums::PaymentMethodType::IndonesianBankTransfer
+                        | common_enums::PaymentMethodType::Qris
                         | common_enums::PaymentMethodType::RevolutPay
-                        | common_enums::PaymentMethodType::Breadpay,
+                        | common_enums::PaymentMethodType::Breadpay
+                        | common_enums::PaymentMethodType::Payjustnow
+                        | common_enums::PaymentMethodType::OpenBanking
+                        | common_enums::PaymentMethodType::Payshap
+                        | common_enums::PaymentMethodType::PayshapProxy
+                        | common_enums::PaymentMethodType::NetworkToken,
                     ) => Err(error_stack::report!(errors::ConnectorError::NotSupported {
                         message: payment_method_type.to_string(),
                         connector: "klarna",
@@ -959,6 +1008,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::DirectCarrierBilling
                         | common_enums::PaymentMethodType::Efecty
                         | common_enums::PaymentMethodType::Eft
+                        | common_enums::PaymentMethodType::EftDebitOrder
                         | common_enums::PaymentMethodType::Eps
                         | common_enums::PaymentMethodType::Evoucher
                         | common_enums::PaymentMethodType::Giropay
@@ -993,14 +1043,21 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Paypal
                         | common_enums::PaymentMethodType::Paze
                         | common_enums::PaymentMethodType::Pix
+                        | common_enums::PaymentMethodType::PixKey
+                        | common_enums::PaymentMethodType::PixEmv
+                        | common_enums::PaymentMethodType::PixQr
+                        | common_enums::PaymentMethodType::PixAutomaticoPush
+                        | common_enums::PaymentMethodType::PixAutomaticoQr
                         | common_enums::PaymentMethodType::PaySafeCard
                         | common_enums::PaymentMethodType::Przelewy24
                         | common_enums::PaymentMethodType::Pse
+                        | common_enums::PaymentMethodType::Qris
                         | common_enums::PaymentMethodType::RedCompra
                         | common_enums::PaymentMethodType::RedPagos
                         | common_enums::PaymentMethodType::SamsungPay
                         | common_enums::PaymentMethodType::Sepa
                         | common_enums::PaymentMethodType::SepaBankTransfer
+                        | common_enums::PaymentMethodType::SepaGuarenteedDebit
                         | common_enums::PaymentMethodType::Sofort
                         | common_enums::PaymentMethodType::Swish
                         | common_enums::PaymentMethodType::TouchNGo
@@ -1008,6 +1065,7 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::Twint
                         | common_enums::PaymentMethodType::UpiCollect
                         | common_enums::PaymentMethodType::UpiIntent
+                        | common_enums::PaymentMethodType::UpiQr
                         | common_enums::PaymentMethodType::Venmo
                         | common_enums::PaymentMethodType::Vipps
                         | common_enums::PaymentMethodType::Walley
@@ -1032,7 +1090,12 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
                         | common_enums::PaymentMethodType::RevolutPay
                         | common_enums::PaymentMethodType::Breadpay
                         | common_enums::PaymentMethodType::IndonesianBankTransfer
-                        | common_enums::PaymentMethodType::Skrill,
+                        | common_enums::PaymentMethodType::Skrill
+                        | common_enums::PaymentMethodType::Payjustnow
+                        | common_enums::PaymentMethodType::OpenBanking
+                        | common_enums::PaymentMethodType::Payshap
+                        | common_enums::PaymentMethodType::PayshapProxy
+                        | common_enums::PaymentMethodType::NetworkToken,
                     ) => Err(error_stack::report!(errors::ConnectorError::NotSupported {
                         message: payment_method_type.to_string(),
                         connector: "klarna",
@@ -1058,7 +1121,12 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
             | PaymentMethodData::GiftCard(_)
             | PaymentMethodData::CardToken(_)
             | PaymentMethodData::NetworkToken(_)
-            | PaymentMethodData::CardDetailsForNetworkTransactionId(_) => {
+            | PaymentMethodData::CardDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::CardWithOptionalCVC(_)
+            | PaymentMethodData::CardWithNetworkTokenDetails(_)
+            | PaymentMethodData::CardWithLimitedDetails(_)
+            | PaymentMethodData::DecryptedWalletTokenDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::NetworkTokenDetailsForNetworkTransactionId(_) => {
                 Err(report!(errors::ConnectorError::NotImplemented(
                     get_unimplemented_payment_method_error_message(req.connector.as_str(),),
                 )))
@@ -1140,7 +1208,8 @@ impl ConnectorIntegration<Void, PaymentsCancelData, PaymentsResponseData> for Kl
         &self,
         req: &PaymentsCancelRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -1213,7 +1282,8 @@ impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Klarna 
         &self,
         req: &RefundsRouterData<Execute>,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -1311,7 +1381,8 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Klarna {
         &self,
         req: &RefundSyncRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -1388,6 +1459,7 @@ impl IncomingWebhook for Klarna {
     fn get_webhook_event_type(
         &self,
         _request: &IncomingWebhookRequestDetails<'_>,
+        _context: Option<&WebhookContext>,
     ) -> CustomResult<IncomingWebhookEvent, errors::ConnectorError> {
         Ok(IncomingWebhookEvent::EventNotSupported)
     }
@@ -1395,7 +1467,8 @@ impl IncomingWebhook for Klarna {
     fn get_webhook_resource_object(
         &self,
         _request: &IncomingWebhookRequestDetails<'_>,
-    ) -> CustomResult<Box<dyn masking::ErasedMaskSerialize>, errors::ConnectorError> {
+    ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
+    {
         Err(report!(errors::ConnectorError::WebhooksNotImplemented))
     }
 }

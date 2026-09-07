@@ -96,12 +96,13 @@ impl From<StripeCard> for payments::Card {
             card_number: card.number,
             card_exp_month: card.exp_month,
             card_exp_year: card.exp_year,
-            card_holder_name: Some(masking::Secret::new("stripe_cust".to_owned())),
+            card_holder_name: Some(hyperswitch_masking::Secret::new("stripe_cust".to_owned())),
             card_cvc: card.cvc,
             card_issuer: None,
             card_network: None,
             bank_code: None,
             card_issuing_country: None,
+            card_issuing_country_code: None,
             card_type: None,
             nick_name: None,
         }
@@ -202,7 +203,7 @@ impl TryFrom<StripeSetupIntentRequest> for payments::PaymentsRequest {
             .map(|ip| std::net::IpAddr::from_str(ip.as_str()))
             .transpose()
             .change_context(errors::ApiErrorResponse::InvalidDataFormat {
-                field_name: "receipt_ipaddress".to_string(),
+                field_name: "receipt_ipaddress".into(),
                 expected_format: "127.0.0.1".to_string(),
             })?;
         let metadata_object = item
@@ -210,7 +211,7 @@ impl TryFrom<StripeSetupIntentRequest> for payments::PaymentsRequest {
             .clone()
             .parse_value("metadata")
             .change_context(errors::ApiErrorResponse::InvalidDataValue {
-                field_name: "metadata mapping failed",
+                field_name: "metadata mapping failed".into(),
             })?;
         let request = Ok(Self {
             amount: Some(api_types::Amount::Zero),
@@ -224,13 +225,14 @@ impl TryFrom<StripeSetupIntentRequest> for payments::PaymentsRequest {
                 .map(|c| c.to_uppercase().parse_enum("currency"))
                 .transpose()
                 .change_context(errors::ApiErrorResponse::InvalidDataValue {
-                    field_name: "currency",
+                    field_name: "currency".into(),
                 })?,
             email: item.receipt_email,
-            name: item
-                .billing_details
-                .as_ref()
-                .and_then(|b| b.name.as_ref().map(|x| masking::Secret::new(x.to_owned()))),
+            name: item.billing_details.as_ref().and_then(|b| {
+                b.name
+                    .as_ref()
+                    .map(|x| hyperswitch_masking::Secret::new(x.to_owned()))
+            }),
             phone: item.shipping.as_ref().and_then(|s| s.phone.clone()),
             description: item.description,
             return_url: item.return_url,
@@ -314,10 +316,12 @@ impl From<api_enums::IntentStatus> for StripeSetupStatus {
             }
             api_enums::IntentStatus::Failed | api_enums::IntentStatus::Expired => Self::Canceled,
             api_enums::IntentStatus::Processing
+            | api_enums::IntentStatus::PartiallyCapturedAndProcessing
             | api_enums::IntentStatus::PartiallyAuthorizedAndRequiresCapture => Self::Processing,
             api_enums::IntentStatus::RequiresCustomerAction => Self::RequiresAction,
             api_enums::IntentStatus::RequiresMerchantAction
-            | api_enums::IntentStatus::Conflicted => Self::RequiresAction,
+            | api_enums::IntentStatus::Conflicted
+            | api_enums::IntentStatus::Review => Self::RequiresAction,
             api_enums::IntentStatus::RequiresPaymentMethod => Self::RequiresPaymentMethod,
             api_enums::IntentStatus::RequiresConfirmation => Self::RequiresConfirmation,
             api_enums::IntentStatus::RequiresCapture
@@ -361,7 +365,7 @@ pub struct RedirectUrl {
     pub url: Option<String>,
 }
 
-#[derive(Eq, PartialEq, serde::Serialize)]
+#[derive(PartialEq, serde::Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StripeNextAction {
     RedirectToUrl {
@@ -399,6 +403,15 @@ pub enum StripeNextAction {
     },
     InvokeHiddenIframe {
         iframe_data: payments::IframeData,
+    },
+    InvokeUpiIntentSdk {
+        sdk_uri: url::Url,
+    },
+    InvokeUpiQrFlow {
+        sdk_uri: url::Url,
+    },
+    InvokeDdc {
+        ddc_data: payments::DDCData,
     },
 }
 
@@ -438,6 +451,7 @@ pub(crate) fn into_stripe_next_action(
             qr_code_url,
             display_text,
             border_color,
+            raw_qr_data: _,
         } => StripeNextAction::QrCodeInformation {
             image_data_url,
             display_to_timestamp,
@@ -477,15 +491,26 @@ pub(crate) fn into_stripe_next_action(
         payments::NextActionData::InvokeHiddenIframe { iframe_data } => {
             StripeNextAction::InvokeHiddenIframe { iframe_data }
         }
+        payments::NextActionData::InvokeUpiIntentSdk { sdk_uri, .. } => {
+            StripeNextAction::InvokeUpiIntentSdk { sdk_uri }
+        }
+        payments::NextActionData::InvokeUpiQrFlow { qr_code_url, .. } => {
+            StripeNextAction::InvokeUpiQrFlow {
+                sdk_uri: qr_code_url,
+            }
+        }
+        payments::NextActionData::InvokeDdc { ddc_data } => {
+            StripeNextAction::InvokeDdc { ddc_data }
+        }
     })
 }
 
-#[derive(Default, Eq, PartialEq, Serialize)]
+#[derive(Default, PartialEq, Serialize)]
 pub struct StripeSetupIntentResponse {
     pub id: id_type::PaymentId,
     pub object: String,
     pub status: StripeSetupStatus,
-    pub client_secret: Option<masking::Secret<String>>,
+    pub client_secret: Option<hyperswitch_masking::Secret<String>>,
     pub metadata: Option<Value>,
     #[serde(with = "common_utils::custom_serde::iso8601::option")]
     pub created: Option<time::PrimitiveDateTime>,
@@ -593,7 +618,7 @@ impl TryFrom<StripePaymentListConstraints> for payments::PaymentListConstraints 
             customer_id: item.customer,
             starting_after: item.starting_after,
             ending_before: item.ending_before,
-            limit: item.limit,
+            limit: item.limit.into(),
             created: from_timestamp_to_datetime(item.created)?,
             created_lt: from_timestamp_to_datetime(item.created_lt)?,
             created_gt: from_timestamp_to_datetime(item.created_gt)?,

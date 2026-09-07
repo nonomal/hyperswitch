@@ -11,11 +11,8 @@ use error_stack::ResultExt;
 use hyperswitch_domain_models::{
     payment_method_data::{BankTransferData, PaymentMethodData},
     router_data::{AccessToken, ConnectorAuthType, ErrorResponse, RouterData},
-    router_flow_types::{
-        payments::Void,
-        refunds::{Execute, RSync},
-    },
-    router_request_types::{PaymentsCancelData, ResponseId},
+    router_flow_types::refunds::{Execute, RSync},
+    router_request_types::ResponseId,
     router_response_types::{
         ConnectorCustomerResponseData, PaymentsResponseData, RefundsResponseData,
     },
@@ -24,7 +21,7 @@ use hyperswitch_domain_models::{
 use hyperswitch_interfaces::{
     consts, errors, events::connector_api_logs::ConnectorEvent, types::Response,
 };
-use masking::{ExposeInterface, Secret};
+use hyperswitch_masking::{ExposeInterface, Secret};
 use serde::{Deserialize, Serialize};
 use time::PrimitiveDateTime;
 use url::Url;
@@ -41,7 +38,10 @@ use super::{
     },
 };
 use crate::{
-    types::{RefreshTokenRouterData, RefundsResponseRouterData, ResponseRouterData},
+    types::{
+        PaymentsCancelResponseRouterData, RefreshTokenRouterData, RefundsResponseRouterData,
+        ResponseRouterData,
+    },
     utils::{self, is_payment_failure, missing_field_err, QrImage, RouterData as OtherRouterData},
 };
 type Error = error_stack::Report<errors::ConnectorError>;
@@ -145,7 +145,7 @@ impl TryFrom<&FacilitapayRouterData<&types::PaymentsAuthorizeRouterData>>
                             subject_id: item.router_data.get_connector_customer_id()?.into(),
                             from_bank_account_id: source_bank_account_id.clone().ok_or(
                                 errors::ConnectorError::MissingRequiredField {
-                                    field_name: "source bank account id",
+                                    field_name: "source bank account id".into(),
                                 },
                             )?,
 
@@ -178,6 +178,10 @@ impl TryFrom<&FacilitapayRouterData<&types::PaymentsAuthorizeRouterData>>
                 | BankTransferData::InstantBankTransferFinland {}
                 | BankTransferData::InstantBankTransferPoland {}
                 | BankTransferData::IndonesianBankTransfer { .. }
+                | BankTransferData::PixAutomaticoPush { .. }
+                | BankTransferData::PixAutomaticoQr {}
+                | BankTransferData::PixEmv {}
+                | BankTransferData::PixQr {}
                 | BankTransferData::LocalBankTransfer { .. } => {
                     Err(errors::ConnectorError::NotImplemented(
                         "Selected payment method through Facilitapay".to_string(),
@@ -202,7 +206,12 @@ impl TryFrom<&FacilitapayRouterData<&types::PaymentsAuthorizeRouterData>>
             | PaymentMethodData::CardToken(_)
             | PaymentMethodData::OpenBanking(_)
             | PaymentMethodData::NetworkToken(_)
-            | PaymentMethodData::CardDetailsForNetworkTransactionId(_) => {
+            | PaymentMethodData::CardDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::CardWithOptionalCVC(_)
+            | PaymentMethodData::CardWithNetworkTokenDetails(_)
+            | PaymentMethodData::CardWithLimitedDetails(_)
+            | PaymentMethodData::DecryptedWalletTokenDetailsForNetworkTransactionId(_)
+            | PaymentMethodData::NetworkTokenDetailsForNetworkTransactionId(_) => {
                 Err(errors::ConnectorError::NotImplemented(
                     "Selected payment method through Facilitapay".to_string(),
                 )
@@ -269,6 +278,7 @@ pub fn parse_facilitapay_error_response(
         reason: Some(raw_error),
         attempt_status: None,
         connector_transaction_id: None,
+        connector_response_reference_id: None,
         network_advice_code: None,
         network_decline_code: None,
         network_error_message: None,
@@ -444,6 +454,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, FacilitapayPaymentsResponse, T, Payment
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.data.transaction_id),
+                    connector_response_reference_id: None,
                     network_decline_code: None,
                     network_advice_code: None,
                     network_error_message: None,
@@ -458,9 +469,12 @@ impl<F, T> TryFrom<ResponseRouterData<F, FacilitapayPaymentsResponse, T, Payment
                     mandate_reference: Box::new(None),
                     connector_metadata: get_qr_code_data(&item.response)?,
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: Some(item.response.data.transaction_id),
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 })
             },
             ..item.data
@@ -498,7 +512,7 @@ fn get_qr_code_data(
 
     let dynamic_pix_code = response.data.dynamic_pix_code.as_ref().ok_or_else(|| {
         errors::ConnectorError::MissingRequiredField {
-            field_name: "dynamic_pix_code",
+            field_name: "dynamic_pix_code".into(),
         }
     })?;
 
@@ -531,19 +545,12 @@ impl From<FacilitapayPaymentStatus> for enums::RefundStatus {
 }
 
 // Void (cancel unprocessed payment) transformer
-impl
-    TryFrom<
-        ResponseRouterData<Void, FacilitapayVoidResponse, PaymentsCancelData, PaymentsResponseData>,
-    > for RouterData<Void, PaymentsCancelData, PaymentsResponseData>
+impl TryFrom<PaymentsCancelResponseRouterData<FacilitapayVoidResponse>>
+    for types::PaymentsCancelRouterData
 {
     type Error = Error;
     fn try_from(
-        item: ResponseRouterData<
-            Void,
-            FacilitapayVoidResponse,
-            PaymentsCancelData,
-            PaymentsResponseData,
-        >,
+        item: PaymentsCancelResponseRouterData<FacilitapayVoidResponse>,
     ) -> Result<Self, Self::Error> {
         let status = common_enums::AttemptStatus::from(item.response.data.status.clone());
 
@@ -557,6 +564,7 @@ impl
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.data.void_id.clone()),
+                    connector_response_reference_id: None,
                     network_decline_code: None,
                     network_advice_code: None,
                     network_error_message: None,
@@ -571,9 +579,12 @@ impl
                     mandate_reference: Box::new(None),
                     connector_metadata: None,
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: Some(item.response.data.void_id),
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 })
             },
             ..item.data

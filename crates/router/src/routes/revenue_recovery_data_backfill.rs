@@ -1,12 +1,16 @@
 use actix_multipart::form::MultipartForm;
 use actix_web::{web, HttpRequest, HttpResponse};
 use api_models::revenue_recovery_data_backfill::{
-    BackfillQuery, GetRedisDataQuery, RevenueRecoveryDataBackfillForm, UpdateTokenStatusRequest,
+    BackfillQuery, GetRedisDataQuery, RetryStatsMigrationForm, RevenueRecoveryDataBackfillForm,
+    UnlockStatusRequest, UnlockStatusResponse, UpdateTokenStatusRequest,
 };
 use router_env::{instrument, tracing, Flow};
 
 use crate::{
-    core::{api_locking, revenue_recovery_data_backfill},
+    core::{
+        api_locking, revenue_recovery::retry_stats::migration as retry_stats_migration,
+        revenue_recovery_data_backfill,
+    },
     routes::AppState,
     services::{api, authentication as auth},
     types::{domain, storage},
@@ -68,6 +72,37 @@ pub async fn revenue_recovery_data_backfill(
     .await
 }
 
+#[instrument(skip_all, fields(flow = ?Flow::RecoveryRetryStatsMigration))]
+pub async fn revenue_recovery_retry_stats_migration(
+    state: web::Data<AppState>,
+    req: HttpRequest,
+    MultipartForm(form): MultipartForm<RetryStatsMigrationForm>,
+) -> HttpResponse {
+    let flow = Flow::RecoveryRetryStatsMigration;
+
+    match form.validate_and_get_records() {
+        Ok(csv_result) => {
+            Box::pin(api::server_wrap(
+                flow,
+                state,
+                &req,
+                csv_result,
+                |state, _: (), csv_result, _| {
+                    retry_stats_migration::migrate_retry_stats_from_csv(state, csv_result)
+                },
+                &auth::V2AdminApiAuth,
+                api_locking::LockAction::NotApplicable,
+            ))
+            .await
+        }
+        Err(e) => HttpResponse::BadRequest().json(serde_json::json!({
+            "error": format!(
+                "failed to parse the retry stats migration CSV file: {e}"
+            )
+        })),
+    }
+}
+
 #[instrument(skip_all, fields(flow = ?Flow::RecoveryDataBackfill))]
 pub async fn update_revenue_recovery_additional_redis_data(
     state: web::Data<AppState>,
@@ -96,18 +131,27 @@ pub async fn update_revenue_recovery_additional_redis_data(
 pub async fn revenue_recovery_data_backfill_status(
     state: web::Data<AppState>,
     req: HttpRequest,
-    path: web::Path<String>,
+    path: web::Path<(String, common_utils::id_type::GlobalPaymentId)>,
 ) -> HttpResponse {
     let flow = Flow::RecoveryDataBackfill;
-    let connector_customer_id = path.into_inner();
+    let (connector_customer_id, payment_intent_id) = path.into_inner();
+
+    let payload = UnlockStatusRequest {
+        connector_customer_id,
+        payment_intent_id,
+    };
 
     Box::pin(api::server_wrap(
         flow,
         state,
         &req,
-        connector_customer_id,
-        |state, _: (), id, _| {
-            revenue_recovery_data_backfill::unlock_connector_customer_status(state, id)
+        payload,
+        |state, _: (), req, _| {
+            revenue_recovery_data_backfill::unlock_connector_customer_status_handler(
+                state,
+                req.connector_customer_id,
+                req.payment_intent_id,
+            )
         },
         &auth::V2AdminApiAuth,
         api_locking::LockAction::NotApplicable,

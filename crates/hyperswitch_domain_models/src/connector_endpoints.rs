@@ -1,8 +1,7 @@
 //! Configs interface
 use common_enums::{connector_enums, ApplicationError};
 use common_utils::errors::CustomResult;
-use masking::Secret;
-use router_derive;
+use hyperswitch_masking::Secret;
 use serde::Deserialize;
 
 use crate::errors::api_error_response;
@@ -11,6 +10,7 @@ use crate::errors::api_error_response;
 #[derive(Debug, Deserialize, Clone, Default, router_derive::ConfigValidate)]
 #[serde(default)]
 pub struct Connectors {
+    pub absa_sanlam: ConnectorParams,
     pub aci: ConnectorParams,
     pub authipay: ConnectorParams,
     pub adyen: AdyenParamsWithThreeBaseUrls,
@@ -28,7 +28,7 @@ pub struct Connectors {
     pub billwerk: ConnectorParams,
     pub bitpay: ConnectorParams,
     pub blackhawknetwork: ConnectorParams,
-    pub bluecode: ConnectorParams,
+    pub calida: ConnectorParams,
     pub bluesnap: ConnectorParamsWithSecondaryBaseUrl,
     pub boku: ConnectorParams,
     pub braintree: ConnectorParams,
@@ -45,6 +45,7 @@ pub struct Connectors {
     pub ctp_visa: NoParams,
     pub custombilling: NoParams,
     pub cybersource: ConnectorParams,
+    pub cybersourcedecisionmanager: ConnectorParams,
     pub datatrans: ConnectorParamsWithSecondaryBaseUrl,
     pub deutschebank: ConnectorParams,
     pub digitalvirgo: ConnectorParams,
@@ -54,25 +55,33 @@ pub struct Connectors {
     pub dwolla: ConnectorParams,
     pub ebanx: ConnectorParams,
     pub elavon: ConnectorParams,
+    pub envoy: ConnectorParams,
     pub facilitapay: ConnectorParams,
     pub finix: ConnectorParams,
     pub fiserv: ConnectorParams,
+    pub fiservcommercehub: ConnectorParams,
     pub fiservemea: ConnectorParams,
     pub fiuu: ConnectorParamsWithThreeUrls,
     pub flexiti: ConnectorParams,
     pub forte: ConnectorParams,
     pub getnet: ConnectorParams,
     pub gigadat: ConnectorParams,
+    pub givepayments: ConnectorParams,
     pub globalpay: ConnectorParams,
     pub globepay: ConnectorParams,
     pub gocardless: ConnectorParams,
+    pub gotyme_sanlam: ConnectorParams,
     pub gpayments: ConnectorParams,
     pub helcim: ConnectorParams,
     pub hipay: ConnectorParamsWithThreeUrls,
+    pub hyperpg: ConnectorParams,
     pub hyperswitch_vault: ConnectorParams,
     pub hyperwallet: ConnectorParams,
     pub iatapay: ConnectorParams,
+    pub ilixium: ConnectorParams,
+    pub imerchantsolutions: ConnectorParams,
     pub inespay: ConnectorParams,
+    pub interpayments: ConnectorParams,
     pub itaubank: ConnectorParams,
     pub jpmorgan: ConnectorParams,
     pub juspaythreedsserver: ConnectorParams,
@@ -88,6 +97,8 @@ pub struct Connectors {
     pub netcetera: ConnectorParams,
     pub nexinets: ConnectorParams,
     pub nexixpay: ConnectorParams,
+    pub payconex: ConnectorParams,
+    pub citigate: ConnectorParams,
     pub nmi: ConnectorParams,
     pub nomupay: ConnectorParams,
     pub noon: ConnectorParamsWithModeType,
@@ -98,6 +109,8 @@ pub struct Connectors {
     pub opennode: ConnectorParams,
     pub paybox: ConnectorParamsWithSecondaryBaseUrl,
     pub payeezy: ConnectorParams,
+    pub payjustnow: ConnectorParams,
+    pub payjustnowinstore: ConnectorParams,
     pub payload: ConnectorParams,
     pub payme: ConnectorParams,
     pub payone: ConnectorParams,
@@ -116,6 +129,7 @@ pub struct Connectors {
     pub razorpay: ConnectorParamsWithKeys,
     pub recurly: ConnectorParams,
     pub redsys: ConnectorParams,
+    pub revolv3: ConnectorParams,
     pub riskified: ConnectorParams,
     pub santander: ConnectorParams,
     pub shift4: ConnectorParams,
@@ -132,20 +146,26 @@ pub struct Connectors {
     pub thunes: ConnectorParams,
     pub tokenex: ConnectorParams,
     pub tokenio: ConnectorParams,
+    pub truelayer: ConnectorParamsWithSecondaryBaseUrl,
+    pub trustly: ConnectorParams,
     pub trustpay: ConnectorParamsWithMoreUrls,
     pub trustpayments: ConnectorParams,
     pub tsys: ConnectorParams,
+    pub tsys_transit: ConnectorParams,
     pub unified_authentication_service: ConnectorParams,
     pub vgs: ConnectorParams,
-    pub volt: ConnectorParams,
+    pub volt: ConnectorParamsWithSecondaryBaseUrl,
     pub wellsfargo: ConnectorParams,
     pub wellsfargopayout: ConnectorParams,
     pub wise: ConnectorParams,
     pub worldline: ConnectorParams,
     pub worldpay: ConnectorParams,
+    pub worldpaymodular: ConnectorParams,
+    pub worldpayraft: ConnectorParams,
     pub worldpayvantiv: ConnectorParamsWithThreeUrls,
-    pub worldpayxml: ConnectorParams,
+    pub worldpayxml: ConnectorParamsWithSecondaryBaseUrl,
     pub xendit: ConnectorParams,
+    pub zift: ConnectorParams,
     pub zen: ConnectorParams,
     pub zsl: ConnectorParams,
 }
@@ -240,6 +260,8 @@ pub struct AdyenParamsWithThreeBaseUrls {
     pub payout_base_url: String,
     /// third base url
     pub dispute_base_url: String,
+    // fourth base url
+    pub management_base_url: String,
 }
 /// struct ConnectorParamsWithSecondaryBaseUrl
 #[derive(Debug, Deserialize, Clone, Default, router_derive::ConfigValidate)]

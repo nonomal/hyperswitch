@@ -18,7 +18,7 @@ use hyperswitch_interfaces::{
     consts::{NO_ERROR_CODE, NO_ERROR_MESSAGE},
     errors,
 };
-use masking::{ExposeInterface, PeekInterface, Secret};
+use hyperswitch_masking::{ExposeInterface, PeekInterface, Secret};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
@@ -450,7 +450,8 @@ impl TryFrom<&PayboxRouterData<&types::PaymentsAuthorizeRouterData>> for PayboxP
                                     .clone()
                                     .ok_or_else(|| {
                                         errors::ConnectorError::MissingRequiredField {
-                                            field_name: "connector_mandate_request_reference_id",
+                                            field_name: "connector_mandate_request_reference_id"
+                                                .into(),
                                         }
                                     })?;
                                 Some(Secret::new(reference_id))
@@ -665,9 +666,12 @@ impl<F, T> TryFrom<ResponseRouterData<F, PayboxCaptureResponse, T, PaymentsRespo
                         connector_request_id: response.transaction_number.clone()
                     })),
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: None,
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 }),
                 amount_captured: None,
                 ..item.data
@@ -680,6 +684,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, PayboxCaptureResponse, T, PaymentsRespo
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.transaction_number),
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -728,9 +733,12 @@ impl<F> TryFrom<ResponseRouterData<F, PayboxResponse, PaymentsAuthorizeData, Pay
                                 connector_request_id: response.transaction_number.clone()
                             })),
                             network_txn_id: None,
+                            network_txn_link_id: None,
                             connector_response_reference_id: None,
                             incremental_authorization_allowed: None,
+                            authentication_data: None,
                             charges: None,
+                            payment_account_reference: None,
                         }),
                         ..item.data
                     }),
@@ -742,6 +750,7 @@ impl<F> TryFrom<ResponseRouterData<F, PayboxResponse, PaymentsAuthorizeData, Pay
                             status_code: item.http_code,
                             attempt_status: None,
                             connector_transaction_id: Some(response.transaction_number),
+                            connector_response_reference_id: None,
                             network_advice_code: None,
                             network_decline_code: None,
                             network_error_message: None,
@@ -761,9 +770,12 @@ impl<F> TryFrom<ResponseRouterData<F, PayboxResponse, PaymentsAuthorizeData, Pay
                     mandate_reference: Box::new(None),
                     connector_metadata: None,
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: None,
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 }),
                 ..item.data
             }),
@@ -775,6 +787,7 @@ impl<F> TryFrom<ResponseRouterData<F, PayboxResponse, PaymentsAuthorizeData, Pay
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: None,
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -808,9 +821,12 @@ impl<F, T> TryFrom<ResponseRouterData<F, PayboxSyncResponse, T, PaymentsResponse
                         connector_request_id: response.transaction_number.clone()
                     })),
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: None,
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 }),
                 ..item.data
             }),
@@ -822,6 +838,7 @@ impl<F, T> TryFrom<ResponseRouterData<F, PayboxSyncResponse, T, PaymentsResponse
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.transaction_number),
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -914,6 +931,7 @@ impl TryFrom<RefundsResponseRouterData<RSync, PayboxSyncResponse>>
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.transaction_number),
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -949,6 +967,7 @@ impl TryFrom<RefundsResponseRouterData<Execute, TransactionResponse>>
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(item.response.transaction_number),
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -1008,9 +1027,12 @@ impl<F>
                         connector_request_id: response.transaction_number.clone()
                     })),
                     network_txn_id: None,
+                    network_txn_link_id: None,
                     connector_response_reference_id: None,
                     incremental_authorization_allowed: None,
+                    authentication_data: None,
                     charges: None,
+                    payment_account_reference: None,
                 }),
                 ..item.data
             }),
@@ -1022,6 +1044,7 @@ impl<F>
                     status_code: item.http_code,
                     attempt_status: None,
                     connector_transaction_id: Some(response.transaction_number),
+                    connector_response_reference_id: None,
                     network_advice_code: None,
                     network_decline_code: None,
                     network_error_message: None,
@@ -1046,13 +1069,13 @@ impl TryFrom<&PayboxRouterData<&types::PaymentsCompleteAuthorizeRouterData>> for
     ) -> Result<Self, Self::Error> {
         let redirect_response = item.router_data.request.redirect_response.clone().ok_or(
             errors::ConnectorError::MissingRequiredField {
-                field_name: "redirect_response",
+                field_name: "redirect_response".into(),
             },
         )?;
         let redirect_payload: RedirectionAuthResponse = redirect_response
             .payload
             .ok_or(errors::ConnectorError::MissingConnectorRedirectionPayload {
-                field_name: "request.redirect_response.payload",
+                field_name: "request.redirect_response.payload".into(),
             })?
             .peek()
             .clone()
@@ -1102,7 +1125,7 @@ impl TryFrom<&PayboxRouterData<&types::PaymentsCompleteAuthorizeRouterData>> for
                                 .connector_mandate_request_reference_id
                                 .clone()
                                 .ok_or_else(|| errors::ConnectorError::MissingRequiredField {
-                                    field_name: "connector_mandate_request_reference_id",
+                                    field_name: "connector_mandate_request_reference_id".into(),
                                 })?;
                             Some(Secret::new(reference_id))
                         }

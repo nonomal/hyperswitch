@@ -48,7 +48,7 @@ use hyperswitch_interfaces::{
     types::{self, Response},
     webhooks,
 };
-use masking::{Mask, PeekInterface};
+use hyperswitch_masking::{Mask, PeekInterface};
 use stripebilling::auth_headers;
 use transformers as stripebilling;
 
@@ -91,23 +91,23 @@ impl ConnectorIntegration<PaymentMethodToken, PaymentMethodTokenizationData, Pay
 }
 
 impl subscriptions_api::Subscriptions for Stripebilling {}
-impl subscriptions_api::GetSubscriptionPlansFlow for Stripebilling {}
+impl subscriptions_api::GetSubscriptionItemsFlow for Stripebilling {}
 impl subscriptions_api::SubscriptionRecordBackFlow for Stripebilling {}
 impl subscriptions_api::SubscriptionCreate for Stripebilling {}
 impl
     ConnectorIntegration<
-        subscription_flow_types::GetSubscriptionPlans,
-        subscription_request_types::GetSubscriptionPlansRequest,
-        subscription_response_types::GetSubscriptionPlansResponse,
+        subscription_flow_types::GetSubscriptionItems,
+        subscription_request_types::GetSubscriptionItemsRequest,
+        subscription_response_types::GetSubscriptionItemsResponse,
     > for Stripebilling
 {
 }
 impl subscriptions_api::GetSubscriptionPlanPricesFlow for Stripebilling {}
 impl
     ConnectorIntegration<
-        subscription_flow_types::GetSubscriptionPlanPrices,
-        subscription_request_types::GetSubscriptionPlanPricesRequest,
-        subscription_response_types::GetSubscriptionPlanPricesResponse,
+        subscription_flow_types::GetSubscriptionItemPrices,
+        subscription_request_types::GetSubscriptionItemPricesRequest,
+        subscription_response_types::GetSubscriptionItemPricesResponse,
     > for Stripebilling
 {
 }
@@ -129,6 +129,34 @@ impl
 {
 }
 
+impl subscriptions_api::SubscriptionCancelFlow for Stripebilling {}
+impl
+    ConnectorIntegration<
+        subscription_flow_types::SubscriptionCancel,
+        subscription_request_types::SubscriptionCancelRequest,
+        subscription_response_types::SubscriptionCancelResponse,
+    > for Stripebilling
+{
+}
+impl subscriptions_api::SubscriptionPauseFlow for Stripebilling {}
+impl
+    ConnectorIntegration<
+        subscription_flow_types::SubscriptionPause,
+        subscription_request_types::SubscriptionPauseRequest,
+        subscription_response_types::SubscriptionPauseResponse,
+    > for Stripebilling
+{
+}
+impl subscriptions_api::SubscriptionResumeFlow for Stripebilling {}
+impl
+    ConnectorIntegration<
+        subscription_flow_types::SubscriptionResume,
+        subscription_request_types::SubscriptionResumeRequest,
+        subscription_response_types::SubscriptionResumeResponse,
+    > for Stripebilling
+{
+}
+
 impl<Flow, Request, Response> ConnectorCommonExt<Flow, Request, Response> for Stripebilling
 where
     Self: ConnectorIntegration<Flow, Request, Response>,
@@ -137,7 +165,8 @@ where
         &self,
         req: &RouterData<Flow, Request, Response>,
         _connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         let mut header = vec![(
             headers::CONTENT_TYPE.to_string(),
             self.get_content_type().to_string().into(),
@@ -168,7 +197,8 @@ impl ConnectorCommon for Stripebilling {
     fn get_auth_header(
         &self,
         auth_type: &ConnectorAuthType,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         let auth = stripebilling::StripebillingAuthType::try_from(auth_type)
             .change_context(errors::ConnectorError::FailedToObtainAuthType)?;
         Ok(vec![
@@ -203,6 +233,7 @@ impl ConnectorCommon for Stripebilling {
             reason: response.reason,
             attempt_status: None,
             connector_transaction_id: None,
+            connector_response_reference_id: None,
             network_advice_code: None,
             network_decline_code: None,
             network_error_message: None,
@@ -233,7 +264,8 @@ impl ConnectorIntegration<Authorize, PaymentsAuthorizeData, PaymentsResponseData
         &self,
         req: &PaymentsAuthorizeRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -321,7 +353,8 @@ impl ConnectorIntegration<PSync, PaymentsSyncData, PaymentsResponseData> for Str
         &self,
         req: &PaymentsSyncRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -385,7 +418,8 @@ impl ConnectorIntegration<Capture, PaymentsCaptureData, PaymentsResponseData> fo
         &self,
         req: &PaymentsCaptureRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -464,7 +498,8 @@ impl ConnectorIntegration<Execute, RefundsData, RefundsResponseData> for Stripeb
         &self,
         req: &RefundsRouterData<Execute>,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -550,7 +585,8 @@ impl ConnectorIntegration<RSync, RefundsData, RefundsResponseData> for Stripebil
         &self,
         req: &RefundSyncRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -624,7 +660,8 @@ impl
         &self,
         req: &recovery_router_data_types::BillingConnectorPaymentsSyncRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -721,7 +758,8 @@ impl
         &self,
         req: &recovery_router_data_types::InvoiceRecordBackRouterData,
         connectors: &Connectors,
-    ) -> CustomResult<Vec<(String, masking::Maskable<String>)>, errors::ConnectorError> {
+    ) -> CustomResult<Vec<(String, hyperswitch_masking::Maskable<String>)>, errors::ConnectorError>
+    {
         self.build_headers(req, connectors)
     }
 
@@ -868,6 +906,7 @@ impl webhooks::IncomingWebhook for Stripebilling {
     fn get_webhook_event_type(
         &self,
         request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _context: Option<&webhooks::WebhookContext>,
     ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
         let webhook =
             stripebilling::StripebillingWebhookBody::get_webhook_object_from_body(request.body)
@@ -891,6 +930,7 @@ impl webhooks::IncomingWebhook for Stripebilling {
     fn get_webhook_event_type(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
+        _context: Option<&webhooks::WebhookContext>,
     ) -> CustomResult<api_models::webhooks::IncomingWebhookEvent, errors::ConnectorError> {
         Err(report!(errors::ConnectorError::WebhooksNotImplemented))
     }
@@ -899,7 +939,8 @@ impl webhooks::IncomingWebhook for Stripebilling {
     fn get_webhook_resource_object(
         &self,
         _request: &webhooks::IncomingWebhookRequestDetails<'_>,
-    ) -> CustomResult<Box<dyn masking::ErasedMaskSerialize>, errors::ConnectorError> {
+    ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
+    {
         Err(report!(errors::ConnectorError::WebhooksNotImplemented))
     }
 
@@ -907,7 +948,8 @@ impl webhooks::IncomingWebhook for Stripebilling {
     fn get_webhook_resource_object(
         &self,
         request: &webhooks::IncomingWebhookRequestDetails<'_>,
-    ) -> CustomResult<Box<dyn masking::ErasedMaskSerialize>, errors::ConnectorError> {
+    ) -> CustomResult<Box<dyn hyperswitch_masking::ErasedMaskSerialize>, errors::ConnectorError>
+    {
         let webhook = stripebilling::StripebillingInvoiceBody::get_invoice_webhook_data_from_body(
             request.body,
         )

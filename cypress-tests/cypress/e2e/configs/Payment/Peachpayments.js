@@ -1,20 +1,27 @@
 import { customerAcceptance } from "./Commons";
-import { getCustomExchange } from "./Modifiers";
 
 const successfulNo3DSCardDetails = {
-  card_number: "4242424242424242",
-  card_exp_month: "10",
-  card_exp_year: "25",
+  card_number: "5200000000000015",
+  card_exp_month: "01",
+  card_exp_year: "28",
   card_holder_name: "John",
-  card_cvc: "123",
+  card_cvc: "576",
 };
 
 const successfulThreeDSTestCardDetails = {
-  card_number: "4242424242424242",
-  card_exp_month: "10",
-  card_exp_year: "25",
+  card_number: "5181030000183696",
+  card_exp_month: "01",
+  card_exp_year: "28",
   card_holder_name: "Joseph",
-  card_cvc: "123",
+  card_cvc: "576",
+};
+
+const failedNo3DSCardDetails = {
+  card_number: "4111111111111111",
+  card_exp_month: "08",
+  card_exp_year: "30",
+  card_holder_name: "joseph Doe",
+  card_cvc: "999",
 };
 
 const singleUseMandateData = {
@@ -88,6 +95,7 @@ export const connectorDetails = {
     PaymentConfirmWithShippingCost: {
       Request: {
         payment_method: "card",
+        payment_method_type: "credit",
         payment_method_data: {
           card: successfulNo3DSCardDetails,
         },
@@ -97,12 +105,11 @@ export const connectorDetails = {
       Response: {
         status: 200,
         body: {
-          status: "failed",
+          status: "succeeded",
           shipping_cost: 50,
-          amount_received: null,
+          amount_received: 6050,
           amount: 6000,
           net_amount: 6050,
-          error_message: "No or unknown response code",
         },
       },
     },
@@ -158,6 +165,7 @@ export const connectorDetails = {
     No3DSManualCapture: {
       Request: {
         payment_method: "card",
+        payment_method_type: "credit",
         amount: 6000,
         payment_method_data: {
           card: successfulNo3DSCardDetails,
@@ -175,11 +183,9 @@ export const connectorDetails = {
       },
     },
     No3DSAutoCapture: {
-      config: {
-        TRIGGER_SKIP: true,
-      },
       Request: {
         payment_method: "card",
+        payment_method_type: "credit",
         amount: 6000,
         payment_method_data: {
           card: successfulNo3DSCardDetails,
@@ -190,14 +196,29 @@ export const connectorDetails = {
         billing: billingAddress,
       },
       Response: {
-        status: 400,
+        status: 200,
         body: {
-          error: {
-            code: "IR_19",
-            message: "Payment method type not supported",
-            reason: "automatic is not supported by peachpayments",
-            type: "invalid_request",
-          },
+          status: "succeeded",
+        },
+      },
+    },
+    No3DSFailPayment: {
+      Request: {
+        payment_method: "card",
+        payment_method_type: "credit",
+        payment_method_data: {
+          card: failedNo3DSCardDetails,
+        },
+        currency: "USD",
+        customer_acceptance: null,
+        setup_future_usage: "on_session",
+      },
+      Response: {
+        status: 200,
+        body: {
+          status: "failed",
+          error_code: "15",
+          error_message: "No such issuer (invalid IIN)",
         },
       },
     },
@@ -238,117 +259,55 @@ export const connectorDetails = {
         },
       },
     },
-    Refund: getCustomExchange({
-      Configs: {
-        TRIGGER_SKIP: true,
-      },
-      Request: {
-        amount: 6000,
-      },
-      Response: {
-        status: 501,
-        body: {
-          error: {
-            type: "invalid_request",
-            message:
-              "This Payment could not be refund because it has a status of requires_capture. The expected state is succeeded, partially_captured",
-            code: "IR_14",
-          },
-        },
-      },
-      ResponseCustom: {
-        status: 501,
-        body: {
-          error: {
-            type: "invalid_request",
-            message: "Execute is not implemented",
-            code: "IR_00",
-          },
-        },
-      },
-    }),
-    PartialRefund: getCustomExchange({
-      Configs: {
-        TRIGGER_SKIP: true,
-      },
-      Request: {
-        amount: 2000,
-      },
-      Response: {
-        status: 501,
-        body: {
-          error: {
-            type: "invalid_request",
-            message:
-              "This Payment could not be refund because it has a status of requires_capture. The expected state is succeeded, partially_captured",
-            code: "IR_14",
-          },
-        },
-      },
-      ResponseCustom: {
-        status: 501,
-        body: {
-          error: {
-            type: "invalid_request",
-            message: "Execute is not implemented",
-            code: "IR_00",
-          },
-        },
-      },
-    }),
-    manualPaymentRefund: getCustomExchange({
-      Configs: {
-        TRIGGER_SKIP: true,
-      },
+    Refund: {
       Request: {
         amount: 6000,
       },
       Response: {
         status: 200,
         body: {
-          status: "failed",
+          status: "succeeded",
         },
       },
-      ResponseCustom: {
-        status: 501,
-        body: {
-          error: {
-            type: "invalid_request",
-            message: "Execute is not implemented",
-            code: "IR_00",
-          },
-        },
-      },
-    }),
-    manualPaymentPartialRefund: getCustomExchange({
-      Configs: {
-        TRIGGER_SKIP: true,
-      },
+    },
+    PartialRefund: {
       Request: {
         amount: 2000,
       },
       Response: {
         status: 200,
         body: {
-          status: "failed",
+          status: "succeeded",
         },
       },
-      ResponseCustom: {
-        status: 501,
+    },
+    manualPaymentRefund: {
+      Request: {
+        amount: 6000,
+      },
+      Response: {
+        status: 200,
         body: {
-          error: {
-            type: "invalid_request",
-            message: "Execute is not implemented",
-            code: "IR_00",
-          },
+          status: "succeeded",
         },
       },
-    }),
+    },
+    manualPaymentPartialRefund: {
+      Request: {
+        amount: 2000,
+      },
+      Response: {
+        status: 200,
+        body: {
+          status: "succeeded",
+        },
+      },
+    },
     SyncRefund: {
       Response: {
         status: 200,
         body: {
-          status: "failed",
+          status: "succeeded",
         },
       },
     },
@@ -385,6 +344,8 @@ export const connectorDetails = {
         payment_method_data: {
           card: successfulNo3DSCardDetails,
         },
+        mandate_data: null,
+        customer_acceptance: customerAcceptance,
       },
       Response: {
         status: 501,
@@ -602,6 +563,41 @@ export const connectorDetails = {
             reason: "automatic is not supported by peachpayments",
             type: "invalid_request",
           },
+        },
+      },
+    },
+    MITAutoCaptureWithCustomerAcceptance: {
+      config: {
+        TRIGGER_SKIP: true,
+      },
+      Request: {
+        customer_acceptance: {
+          acceptance_type: "offline",
+          accepted_at: "1963-05-03T04:07:52.723Z",
+          online: {
+            ip_address: "127.0.0.1",
+            user_agent: "amet irure esse",
+          },
+        },
+      },
+      Response: {
+        status: 400,
+        body: {
+          error: {
+            code: "IR_19",
+            message: "Payment method type not supported",
+            reason: "automatic is not supported by peachpayments",
+            type: "invalid_request",
+          },
+        },
+      },
+    },
+    MITWithLimitedCardData: {
+      Request: {},
+      Response: {
+        status: 200,
+        body: {
+          status: "succeeded",
         },
       },
     },

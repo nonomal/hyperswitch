@@ -1,8 +1,8 @@
 use api_models::enums::PayoutConnectors;
 use common_enums as storage_enums;
 use common_utils::{
-    id_type, payout_method_utils,
-    types::{UnifiedCode, UnifiedMessage},
+    id_type, payout_method_utils, pii,
+    types::{self, UnifiedCode, UnifiedMessage},
 };
 use serde::{Deserialize, Serialize};
 use storage_enums::MerchantStorageScheme;
@@ -35,6 +35,14 @@ pub trait PayoutAttemptInterface {
         _storage_scheme: MerchantStorageScheme,
     ) -> error_stack::Result<PayoutAttempt, Self::Error>;
 
+    async fn find_payout_attempt_by_merchant_id_payout_id_payout_attempt_id(
+        &self,
+        _merchant_id: &id_type::MerchantId,
+        _payout_id: &id_type::PayoutId,
+        _payout_attempt_id: &str,
+        _storage_scheme: MerchantStorageScheme,
+    ) -> error_stack::Result<PayoutAttempt, Self::Error>;
+
     async fn find_payout_attempt_by_merchant_id_connector_payout_id(
         &self,
         _merchant_id: &id_type::MerchantId,
@@ -55,6 +63,13 @@ pub trait PayoutAttemptInterface {
         _merchant_id: &id_type::MerchantId,
         _storage_scheme: MerchantStorageScheme,
     ) -> error_stack::Result<PayoutListFilters, Self::Error>;
+
+    async fn find_payout_attempts_by_merchant_id_payout_id(
+        &self,
+        _merchant_id: &id_type::MerchantId,
+        _payout_id: &id_type::PayoutId,
+        _storage_scheme: MerchantStorageScheme,
+    ) -> error_stack::Result<Vec<PayoutAttempt>, Self::Error>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +107,36 @@ pub struct PayoutAttempt {
     pub unified_message: Option<UnifiedMessage>,
     pub additional_payout_method_data: Option<payout_method_utils::AdditionalPayoutMethodData>,
     pub merchant_order_reference_id: Option<String>,
+    pub payout_connector_metadata: Option<pii::SecretSerdeValue>,
+    pub processor_merchant_id: Option<id_type::MerchantId>,
+    pub created_by: Option<types::CreatedBy>,
+    pub source_bank_data_token: Option<String>,
+    pub additional_source_bank_data: Option<payout_method_utils::BankAdditionalData>,
+    pub connector_eligibility_reference_id: Option<String>,
+    pub connector_request_reference_id: Option<String>,
+}
+
+impl PayoutAttempt {
+    pub fn to_payout_attempt_response(
+        &self,
+        payout: &Payouts,
+    ) -> api_models::payouts::PayoutAttemptResponse {
+        api_models::payouts::PayoutAttemptResponse {
+            attempt_id: self.payout_attempt_id.clone(),
+            status: self.status,
+            amount: payout.amount,
+            currency: Some(payout.destination_currency),
+            connector: self.connector.clone(),
+            error_code: self.error_code.clone(),
+            error_message: self.error_message.clone(),
+            payment_method: payout.payout_type,
+            payout_method_type: None,
+            connector_transaction_id: self.connector_payout_id.clone(),
+            cancellation_reason: None,
+            unified_code: self.unified_code.clone(),
+            unified_message: self.unified_message.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +164,13 @@ pub struct PayoutAttemptNew {
     pub unified_message: Option<UnifiedMessage>,
     pub additional_payout_method_data: Option<payout_method_utils::AdditionalPayoutMethodData>,
     pub merchant_order_reference_id: Option<String>,
+    pub payout_connector_metadata: Option<pii::SecretSerdeValue>,
+    pub processor_merchant_id: Option<id_type::MerchantId>,
+    pub created_by: Option<types::CreatedBy>,
+    pub source_bank_data_token: Option<String>,
+    pub additional_source_bank_data: Option<payout_method_utils::BankAdditionalData>,
+    pub connector_eligibility_reference_id: Option<String>,
+    pub connector_request_reference_id: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +184,8 @@ pub enum PayoutAttemptUpdate {
 
         unified_code: Option<UnifiedCode>,
         unified_message: Option<UnifiedMessage>,
+        payout_connector_metadata: Option<pii::SecretSerdeValue>,
+        connector_eligibility_reference_id: Option<String>,
     },
     PayoutTokenUpdate {
         payout_token: String,
@@ -146,9 +200,20 @@ pub enum PayoutAttemptUpdate {
         connector: String,
         routing_info: Option<serde_json::Value>,
         merchant_connector_id: Option<id_type::MerchantConnectorAccountId>,
+        connector_request_reference_id: String,
     },
-    AdditionalPayoutMethodDataUpdate {
+    AdditionalPayoutDataUpdate {
         additional_payout_method_data: Option<payout_method_utils::AdditionalPayoutMethodData>,
+        additional_source_bank_data: Option<payout_method_utils::BankAdditionalData>,
+        source_bank_data_token: Option<String>,
+    },
+    ManualUpdate {
+        status: Option<storage_enums::PayoutStatus>,
+        error_code: Option<String>,
+        error_message: Option<String>,
+        unified_code: Option<UnifiedCode>,
+        unified_message: Option<UnifiedMessage>,
+        connector_payout_id: Option<String>,
     },
 }
 
@@ -167,9 +232,14 @@ pub struct PayoutAttemptUpdateInternal {
     pub address_id: Option<String>,
     pub customer_id: Option<id_type::CustomerId>,
     pub merchant_connector_id: Option<id_type::MerchantConnectorAccountId>,
+    pub connector_request_reference_id: Option<String>,
     pub unified_code: Option<UnifiedCode>,
     pub unified_message: Option<UnifiedMessage>,
     pub additional_payout_method_data: Option<payout_method_utils::AdditionalPayoutMethodData>,
+    pub payout_connector_metadata: Option<pii::SecretSerdeValue>,
+    pub source_bank_data_token: Option<String>,
+    pub additional_source_bank_data: Option<payout_method_utils::BankAdditionalData>,
+    pub connector_eligibility_reference_id: Option<String>,
 }
 
 impl From<PayoutAttemptUpdate> for PayoutAttemptUpdateInternal {
@@ -187,6 +257,8 @@ impl From<PayoutAttemptUpdate> for PayoutAttemptUpdateInternal {
                 is_eligible,
                 unified_code,
                 unified_message,
+                payout_connector_metadata,
+                connector_eligibility_reference_id,
             } => Self {
                 connector_payout_id,
                 status: Some(status),
@@ -195,6 +267,8 @@ impl From<PayoutAttemptUpdate> for PayoutAttemptUpdateInternal {
                 is_eligible,
                 unified_code,
                 unified_message,
+                payout_connector_metadata,
+                connector_eligibility_reference_id,
                 ..Default::default()
             },
             PayoutAttemptUpdate::BusinessUpdate {
@@ -213,16 +287,38 @@ impl From<PayoutAttemptUpdate> for PayoutAttemptUpdateInternal {
                 connector,
                 routing_info,
                 merchant_connector_id,
+                connector_request_reference_id,
             } => Self {
                 connector: Some(connector),
                 routing_info,
                 merchant_connector_id,
+                connector_request_reference_id: Some(connector_request_reference_id),
                 ..Default::default()
             },
-            PayoutAttemptUpdate::AdditionalPayoutMethodDataUpdate {
+            PayoutAttemptUpdate::AdditionalPayoutDataUpdate {
                 additional_payout_method_data,
+                additional_source_bank_data,
+                source_bank_data_token,
             } => Self {
                 additional_payout_method_data,
+                additional_source_bank_data,
+                source_bank_data_token,
+                ..Default::default()
+            },
+            PayoutAttemptUpdate::ManualUpdate {
+                status,
+                error_code,
+                error_message,
+                unified_code,
+                unified_message,
+                connector_payout_id,
+            } => Self {
+                status,
+                error_code,
+                error_message,
+                unified_code,
+                unified_message,
+                connector_payout_id,
                 ..Default::default()
             },
         }

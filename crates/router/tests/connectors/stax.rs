@@ -1,6 +1,6 @@
 use std::{str::FromStr, time::Duration};
 
-use masking::Secret;
+use hyperswitch_masking::Secret;
 use router::types::{self, domain, storage::enums, PaymentsResponseData};
 use test_utils::connector_auth;
 
@@ -77,6 +77,9 @@ fn token_details() -> Option<types::PaymentMethodTokenizationData> {
         setup_future_usage: None,
         customer_acceptance: None,
         setup_mandate_details: None,
+        payment_method_type: None,
+        router_return_url: None,
+        capture_method: None,
     })
 }
 
@@ -492,6 +495,9 @@ async fn should_fail_payment_for_incorrect_cvc() {
                 setup_future_usage: None,
                 customer_acceptance: None,
                 setup_mandate_details: None,
+                payment_method_type: None,
+                router_return_url: None,
+                capture_method: None,
             }),
             get_default_payment_info(connector_customer_id, None),
         )
@@ -535,6 +541,9 @@ async fn should_fail_payment_for_invalid_exp_month() {
                 setup_future_usage: None,
                 customer_acceptance: None,
                 setup_mandate_details: None,
+                payment_method_type: None,
+                router_return_url: None,
+                capture_method: None,
             }),
             get_default_payment_info(connector_customer_id, None),
         )
@@ -578,6 +587,9 @@ async fn should_fail_payment_for_incorrect_expiry_year() {
                 setup_future_usage: None,
                 customer_acceptance: None,
                 setup_mandate_details: None,
+                payment_method_type: None,
+                router_return_url: None,
+                capture_method: None,
             }),
             get_default_payment_info(connector_customer_id, None),
         )

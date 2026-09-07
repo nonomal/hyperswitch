@@ -259,7 +259,7 @@
                   "off_session": true,
                   "recurring_details": {
                       "type": "payment_method_id",
-                      "data": "pm_123456789" 
+                      "data": "pm_123456789"
                   },
                   "split_payments": {
                       "stripe_split_payment": {
@@ -468,8 +468,8 @@
                         "customer_id": "cus_abcdefgh",
                         "customer": {
                             "id": "cus_abcdefgh",
-                            "name": "John Dough", 
-                            "email": "john@example.com", 
+                            "name": "John Dough",
+                            "email": "john@example.com",
                             "phone": "9123456789"
                         },
                         "billing": {
@@ -501,8 +501,8 @@
                       "connector_mandate_id": "pm_abcdefgh",
                       "customer": {
                           "id": "cus_abcdefgh",
-                          "name": "John Dough", 
-                          "email": "john@example.com", 
+                          "name": "John Dough",
+                          "email": "john@example.com",
                           "phone": "9123456789"
                       },
                       "billing": {
@@ -534,8 +534,8 @@
                     "connector_mandate_id": "pm_abcdefgh",
                     "customer": {
                         "id": "cus_abcdefgh",
-                        "name": "John Dough", 
-                        "email": "john@example.com", 
+                        "name": "John Dough",
+                        "email": "john@example.com",
                         "phone": "9123456789"
                     },
                     "billing": {
@@ -774,7 +774,7 @@ pub fn payments_connector_session() {}
     ),
     tag = "Payments",
     operation_id = "Create V2 Session tokens for a Payment",
-    security(("publishable_key" = []))
+    security(("publishable_key__client_secret" = []))
 )]
 pub fn payments_connector_session() {}
 
@@ -837,7 +837,7 @@ pub fn payments_cancel() {}
         ("payment_id" = String, Path, description = "The identifier for payment")
     ),
     responses(
-        (status = 200, description = "Payment canceled post capture"),
+        (status = 200, description = "Payment canceled post capture", body = PaymentsResponse),
         (status = 400, description = "Missing mandatory fields", body = GenericErrorResponseOpenApi)
     ),
     tag = "Payments",
@@ -845,6 +845,25 @@ pub fn payments_cancel() {}
     security(("api_key" = []))
 )]
 pub fn payments_cancel_post_capture() {}
+
+/// Payments - Cancel Post Capture Retrieve
+///
+/// Retrieves a canceled Payment post capture
+#[utoipa::path(
+    get,
+    path = "/payments/{payment_id}/cancel_post_capture",
+    params(
+        ("payment_id" = String, Path, description = "The identifier for payment")
+    ),
+    responses(
+        (status = 200, description = "Payment canceled post capture", body = PaymentsResponse),
+        (status = 400, description = "Missing mandatory fields", body = GenericErrorResponseOpenApi)
+    ),
+    tag = "Payments",
+    operation_id = "Cancel a Payment Post Capture Retrieve",
+    security(("api_key" = []))
+)]
+pub fn payments_cancel_post_capture_retrieve() {}
 
 /// Payments - List
 ///
@@ -920,6 +939,26 @@ pub async fn profile_payments_list() {}
   security(("api_key" = []))
 )]
 pub fn payments_incremental_authorization() {}
+
+/// Payments - Extended Authorization
+///
+/// Extended authorization is available for payments currently in the `requires_capture` status
+/// Call this endpoint to increase the authorization validity period
+#[utoipa::path(
+    post,
+    path = "/payments/{payment_id}/extend_authorization",
+    params(
+        ("payment_id" = String, Path, description = "The identifier for payment")
+    ),
+    responses(
+        (status = 200, description = "Extended authorization for the payment"),
+        (status = 400, description = "Missing mandatory fields", body = GenericErrorResponseOpenApi)
+    ),
+    tag = "Payments",
+    operation_id = "Extend authorization period for a Payment",
+    security(("api_key" = []))
+)]
+pub fn payments_extend_authorization() {}
 
 /// Payments - External 3DS Authentication
 ///
@@ -1012,17 +1051,44 @@ pub fn payments_post_session_tokens() {}
 )]
 pub fn payments_update_metadata() {}
 
+/// Payments - Submit Eligibility Check Data
+#[utoipa::path(
+    post,
+    path = "/payments/{payment_id}/eligibility_check",
+    params(
+        ("payment_id" = String, Path, description = "The identifier for payment")
+    ),
+    request_body=PaymentsEligibilityCheckRequest,
+    responses(
+        (status = 200, description = "Eligibility Check submit is successful", body = PaymentsEligibilityCheckResponse),
+        (status = 400, description = "Bad Request", body = GenericErrorResponseOpenApi)
+    ),
+    tag = "Payments",
+    operation_id = "Submit Eligibility Check data for a Payment",
+    security(("publishable_key" = []))
+)]
+pub fn payments_submit_eligibility_check() {}
+
 /// Payments - Submit Eligibility Data
+///
+/// Runs eligibility checks (blocklist, card testing guard) and calculates an external surcharge
+/// in a single call. Intended to be called by the SDK before the final confirm step.
+///
+/// - If eligibility is denied the response will contain `sdk_next_action: deny` and no surcharge details.
+/// - If the merchant has no surcharge connector configured, `surcharge_details` will be `null`.
+/// - Surcharge calculation is best-effort: if the external call fails the payment still proceeds
+///   with `surcharge_details: null`.
 #[utoipa::path(
     post,
     path = "/payments/{payment_id}/eligibility",
     params(
-        ("payment_id" = String, Path, description = "The identifier for payment")
+        ("payment_id" = String, Path, description = "The identifier for the payment")
     ),
-    request_body=PaymentsEligibilityRequest,
+    request_body = PaymentsEligibilityRequest,
     responses(
-        (status = 200, description = "Eligbility submit is successful", body = PaymentsEligibilityResponse),
-        (status = 400, description = "Bad Request", body = GenericErrorResponseOpenApi)
+        (status = 200, description = "Eligibility and surcharge checks successful", body = PaymentsEligibilityResponse),
+        (status = 400, description = "Bad Request", body = GenericErrorResponseOpenApi),
+        (status = 404, description = "Payment not found", body = GenericErrorResponseOpenApi)
     ),
     tag = "Payments",
     operation_id = "Submit Eligibility data for a Payment",
@@ -1158,7 +1224,7 @@ pub fn payments_update_intent() {}
   ),
   tag = "Payments",
   operation_id = "Confirm Payment Intent",
-  security(("publishable_key" = [])),
+  security(("publishable_key__client_secret" = [])),
 )]
 #[cfg(feature = "v2")]
 pub fn payments_confirm_intent() {}
@@ -1265,7 +1331,7 @@ pub(crate) enum ForceSync {
     ),
     tag = "Payments",
     operation_id = "Retrieve Payment methods for a Payment",
-    security(("publishable_key" = []))
+    security(("publishable_key__client_secret" = []))
 )]
 pub fn list_payment_methods() {}
 
@@ -1287,13 +1353,13 @@ pub fn list_payment_methods() {}
 )]
 pub fn payments_list() {}
 
-/// Payments - Gift Card Balance Check
+/// Payments - Check Balance and Apply PM Data
 ///
-/// Check the balance of the provided gift card. This endpoint also returns whether the gift card balance is enough to cover the entire amount or another payment method is needed
+/// Check the balance of the payment methods, apply the payment method data and recalculate remaining_amount and surcharge
 #[cfg(feature = "v2")]
 #[utoipa::path(
-    get,
-    path = "/v2/payments/{id}/check-gift-card-balance",
+    post,
+    path = "/v2/payments/{id}/eligibility/check-balance-and-apply-pm-data",
     params(
         ("id" = String, Path, description = "The global payment id"),
         (
@@ -1303,13 +1369,13 @@ pub fn payments_list() {}
         ),
     ),
     request_body(
-      content = PaymentsGiftCardBalanceCheckRequest,
+      content = ApplyPaymentMethodDataRequest,
     ),
     responses(
-        (status = 200, description = "Get the Gift Card Balance", body = GiftCardBalanceCheckResponse),
+        (status = 200, description = "Apply the Payment Method Data", body = CheckAndApplyPaymentMethodDataResponse),
     ),
     tag = "Payments",
-    operation_id = "Retrieve Gift Card Balance",
-    security(("publishable_key" = []))
+    operation_id = "Apply Payment Method Data",
+    security(("publishable_key__client_secret" = []))
 )]
-pub fn payment_check_gift_card_balance() {}
+pub fn payments_apply_pm_data() {}
